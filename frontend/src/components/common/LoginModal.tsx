@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useLanguage } from '@/context/LanguageContext';
+import { pickLang } from '@/utils/i18n';
 import { Modal } from '@/components/common/Modal';
 import { Button } from '@/components/common/Button';
 import { Input } from '@/components/common/Input';
@@ -31,21 +32,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
     {
       name: 'Ramesh Kumar',
       email: 'ramesh.farmer@example.gov.in',
-      role: language === 'hi' ? 'सीमांत किसान (वाराणसी, उ.प्र.)' : 'Marginal Farmer (Varanasi, UP)',
+      role: pickLang(language, 'Marginal Farmer (Varanasi, UP)', 'सीमांत किसान (वाराणसी, उ.प्र.)', 'सीमांत शेतकरी (वाराणसी, उ.प्र.)'),
       category: 'OBC • Land 1.5 acres • Farmer',
       token: 'mock-ramesh-farmer-token',
     },
     {
       name: 'Priya Sharma',
       email: 'priya.student@example.gov.in',
-      role: language === 'hi' ? 'कॉलेज छात्रा (जयपुर, राजस्थान)' : 'College Student (Jaipur, RJ)',
+      role: pickLang(language, 'College Student (Jaipur, RJ)', 'कॉलेज छात्रा (जयपुर, राजस्थान)', 'महाविद्यालयीन विद्यार्थिनी (जयपूर, राजस्थान)'),
       category: 'General • NMMS / CSSS • Student',
       token: 'mock-priya-student-token',
     },
     {
       name: 'Anita Devi',
       email: 'anita.artisan@example.gov.in',
-      role: language === 'hi' ? 'महिला उद्यमी / कारीगर (पटना, बिहार)' : 'Rural Artisan (Patna, BR)',
+      role: pickLang(language, 'Rural Artisan (Patna, BR)', 'महिला उद्यमी / कारीगर (पटना, बिहार)', 'ग्रामीण कारागीर / महिला उद्योजिका (पाटणा, बिहार)'),
       category: 'SC • Vishwakarma • Artisan',
       token: 'mock-anita-artisan-token',
     },
@@ -120,10 +121,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
           </div>
           <span>
             {isAuthenticated
-              ? (language === 'hi' ? 'नागरिक खाता' : 'Citizen Account')
+              ? pickLang(language, 'Citizen Account', 'नागरिक खाता', 'नागरिक खाते')
               : isRegisterMode
-              ? (language === 'hi' ? 'नया नागरिक पंजीकरण (Register)' : 'New Citizen Registration')
-              : (language === 'hi' ? 'नागरिक प्रवेश (Citizen Login)' : 'Citizen Access & Login')}
+              ? pickLang(language, 'New Citizen Registration', 'नया नागरिक पंजीकरण (Register)', 'नवीन नागरिक नोंदणी')
+              : pickLang(language, 'Citizen Access & Login', 'नागरिक प्रवेश (Citizen Login)', 'नागरिक प्रवेश (लॉगिन)')}
           </span>
         </div>
       }
@@ -143,8 +144,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
                 <Badge variant={isProfileComplete(profile) ? 'eligible' : 'category'}>
                   <CheckCircle2 className="w-3 h-3 mr-1" />
                   {isProfileComplete(profile)
-                    ? (language === 'hi' ? 'सत्यापित पूर्ण प्रोफ़ाइल' : 'Complete Profile')
-                    : (language === 'hi' ? 'अधूरी प्रोफ़ाइल' : 'Incomplete Profile')}
+                    ? pickLang(language, 'Complete Profile', 'सत्यापित पूर्ण प्रोफ़ाइल', 'सत्यापित पूर्ण प्रोफाइल')
+                    : pickLang(language, 'Incomplete Profile', 'अधूरी प्रोफ़ाइल', 'अपूर्ण प्रोफाइल')}
                 </Badge>
               </div>
             </div>
@@ -153,31 +154,33 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="p-3 rounded-xl bg-white border border-navy/10 space-y-0.5">
               <span className="text-navy/50 uppercase tracking-wider text-[10px] font-semibold">
-                {language === 'hi' ? 'वार्षिक आय' : 'Annual Income'}
+                {pickLang(language, 'Annual Income', 'वार्षिक आय', 'वार्षिक उत्पन्न')}
               </span>
               <p className="font-bold text-navy">
                 {profile.annual_family_income !== undefined && profile.annual_family_income !== null
                   ? `₹${Number(profile.annual_family_income).toLocaleString('en-IN')}`
-                  : (language === 'hi' ? 'दर्ज नहीं' : 'Not set')}
+                  : pickLang(language, 'Not set', 'दर्ज नहीं', 'नमूद नाही')}
               </p>
             </div>
             <div className="p-3 rounded-xl bg-white border border-navy/10 space-y-0.5">
               <span className="text-navy/50 uppercase tracking-wider text-[10px] font-semibold">
-                {language === 'hi' ? 'आवास क्षेत्र' : 'Residence'}
+                {pickLang(language, 'Residence', 'आवास क्षेत्र', 'निवास क्षेत्र')}
               </span>
-              <p className="font-bold text-navy capitalize">{profile.residence_type || (language === 'hi' ? 'दर्ज नहीं' : 'Not set')}</p>
+              <p className="font-bold text-navy capitalize">
+                {profile.residence_type || pickLang(language, 'Not set', 'दर्ज नहीं', 'नमूद नाही')}
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 pt-2">
             <Link to="/onboarding" onClick={onClose} className="flex-1">
               <Button variant="primary" size="md" className="w-full" rightIcon={<ArrowRight className="w-4 h-4" />}>
-                {language === 'hi' ? 'प्रोफ़ाइल संपादित करें' : 'Edit Full Profile'}
+                {pickLang(language, 'Edit Full Profile', 'प्रोफ़ाइल संपादित करें', 'प्रोफाइल संपादित करा')}
               </Button>
             </Link>
 
             <Button variant="outline" size="md" onClick={logout} leftIcon={<LogOut className="w-4 h-4" />}>
-              {language === 'hi' ? 'लॉगआउट' : 'Logout'}
+              {pickLang(language, 'Logout', 'लॉगआउट', 'लॉगआउट')}
             </Button>
           </div>
         </div>
@@ -193,7 +196,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
               }`}
             >
               <LogIn className="w-3.5 h-3.5" />
-              <span>{language === 'hi' ? 'लॉगिन (Login)' : 'Citizen Login'}</span>
+              <span>{pickLang(language, 'Citizen Login', 'लॉगिन (Login)', 'लॉगिन (Login)')}</span>
             </button>
             <button
               type="button"
@@ -203,7 +206,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
               }`}
             >
               <UserPlus className="w-3.5 h-3.5" />
-              <span>{language === 'hi' ? 'नया खाता (Register)' : 'New Registration'}</span>
+              <span>{pickLang(language, 'New Registration', 'नया खाता (Register)', 'नवीन नोंदणी (Register)')}</span>
             </button>
           </div>
 
@@ -218,7 +221,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
           <form onSubmit={handleFormSubmit} className="space-y-4">
             {isRegisterMode && (
               <Input
-                label={language === 'hi' ? 'पूरा नाम' : 'Full Name'}
+                label={pickLang(language, 'Full Name', 'पूरा नाम', 'पूर्ण नाव')}
                 placeholder="e.g. Ramesh Kumar"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
@@ -227,7 +230,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
             )}
 
             <Input
-              label={language === 'hi' ? 'ईमेल या 10-अंकीय मोबाइल नंबर' : 'Email or 10-Digit Mobile Number'}
+              label={pickLang(language, 'Email or 10-Digit Mobile Number', 'ईमेल या 10-अंकीय मोबाइल नंबर', 'ईमेल किंवा १०-अंकी मोबाईल क्रमांक')}
               placeholder="e.g. 9876543210 or citizen@example.gov.in"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -235,7 +238,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
             />
 
             <Input
-              label={language === 'hi' ? 'पासवर्ड' : 'Password'}
+              label={pickLang(language, 'Password', 'पासवर्ड', 'पासवर्ड')}
               type="password"
               placeholder="••••••••••••"
               value={password}
@@ -252,15 +255,15 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
               rightIcon={<ArrowRight className="w-4 h-4" />}
             >
               {isRegisterMode
-                ? (language === 'hi' ? 'पंजीकरण करें और प्रोफ़ाइल बनाएं' : 'Register & Complete Profile')
-                : (language === 'hi' ? 'सुरक्षित प्रवेश' : 'Secure Citizen Login')}
+                ? pickLang(language, 'Register & Complete Profile', 'पंजीकरण करें और प्रोफ़ाइल बनाएं', 'नोंदणी करा आणि प्रोफाइल पूर्ण करा')
+                : pickLang(language, 'Secure Citizen Login', 'सुरक्षित प्रवेश', 'सुरक्षित नागरिक लॉगिन')}
             </Button>
           </form>
 
           {/* Demo Personas for Instant Testing */}
           <div className="pt-2 border-t border-navy/8 space-y-3">
             <span className="text-[11px] font-bold uppercase tracking-wider text-navy/50 block">
-              {language === 'hi' ? 'त्वरित डेमो परीक्षण प्रोफाइल' : 'Instant Demo Citizen Profiles'}
+              {pickLang(language, 'Instant Demo Citizen Profiles', 'त्वरित डेमो परीक्षण प्रोफाइल', 'त्वरित डेमो नागरिक प्रोफाइल')}
             </span>
             <div className="space-y-2">
               {demoPersonas.map((persona) => (

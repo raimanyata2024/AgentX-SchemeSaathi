@@ -383,15 +383,26 @@ export const ChatPage: React.FC = () => {
         const textToSpeak = assistantMsg.spoken_text || assistantMsg.message_content;
         speak(textToSpeak, assistantMsg.detected_language || 'mr', assistantMsg.id);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Chat error:', err);
       const errLang = selectedLanguage === 'auto' ? language : selectedLanguage;
-      const errText =
-        errLang === 'en'
-          ? 'Sorry, there was a problem connecting to the server. Please try again.'
+      const isAuthErr =
+        err?.code === 'UNAUTHORIZED' ||
+        err?.code === 'HTTP_401' ||
+        /authentication token|token is missing|please log in|unauthorized/i.test(
+          err?.message || ''
+        );
+      const errText = isAuthErr
+        ? errLang === 'en'
+          ? 'Please sign in with your citizen account (click "Login" in the top right) so Scheme Saathi can access your profile and live scheme database.'
           : errLang === 'mr'
-          ? 'माफ करा, सर्व्हरशी संपर्क साधताना समस्या आली. कृपया पुन्हा प्रयत्न करा.'
-          : 'क्षमा करें, अनुरोध संसाधित करने में समस्या हुई। कृपया पुनः प्रयास करें।';
+          ? 'कृपया वरच्या उजव्या बाजूला असलेल्या "लॉग इन" बटणावर क्लिक करून तुमच्या खात्यात प्रवेश करा, जेणेकरून योजना साथी तुमचे प्रोफाइल व योजना माहिती तपासू शकेल.'
+          : 'कृपया ऊपर दाईं ओर "Login / लॉग इन" पर क्लिक करके अपने नागरिक खाते में प्रवेश करें ताकि योजना साथी आपकी प्रोफ़ाइल और योजनाओं का विवरण देख सके।'
+        : errLang === 'en'
+        ? 'Sorry, there was a problem connecting to the server. Please try again.'
+        : errLang === 'mr'
+        ? 'माफ करा, सर्व्हरशी संपर्क साधताना समस्या आली. कृपया पुन्हा प्रयत्न करा.'
+        : 'क्षमा करें, अनुरोध संसाधित करने में समस्या हुई। कृपया पुनः प्रयास करें।';
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         conversation_id: conversationId,

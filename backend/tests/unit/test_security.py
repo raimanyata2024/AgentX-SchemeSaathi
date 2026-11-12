@@ -147,3 +147,8 @@ def test_unsupported_jwt_algorithm_rejected():
         Settings(
             JWT_ALGORITHM="none",
         )
+
+
+def test_postgres_scheme_url_normalized_for_sqlalchemy():
+    s = Settings(DATABASE_URL="postgres://user:pass@db.example.com:5432/scheme_saathi")
+    assert s.DATABASE_URL == "postgresql://user:pass@db.example.com:5432/scheme_saathi"

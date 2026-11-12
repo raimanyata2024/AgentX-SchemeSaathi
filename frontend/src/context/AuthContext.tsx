@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '@/types';
 import { apiClient } from '@/services/api/client';
+import { isAuthenticationError } from '@/utils/errors';
 import { profileService } from '@/services/api/profileService';
 import { authService, RegisterRequest } from '@/services/api/authService';
 import { MOCK_USER_PROFILE } from '@/services/mock/mockData';
@@ -40,12 +41,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser({ id: p.user_id, email: `${p.full_name?.toLowerCase().replace(/\s+/g, '') || 'citizen'}@example.gov.in` });
       }
       return p;
-    } catch {
+    } catch (err) {
       if (apiClient.isMockMode()) {
         setProfile(MOCK_USER_PROFILE);
         setUser({ id: MOCK_USER_PROFILE.user_id, email: 'ramesh.farmer@example.com' });
         return MOCK_USER_PROFILE;
       } else {
+        if (isAuthenticationError(err)) {
+          // Clear expired/invalid token so isAuthenticated reflects real session validity
+          apiClient.setToken(null);
+          setToken(null);
+        }
         setProfile(null);
         setUser(null);
         return null;
@@ -58,6 +64,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       if (token || apiClient.isMockMode()) {
         await refreshProfile();
+      } else {
+        setProfile(null);
+        setUser(null);
       }
       setIsLoading(false);
     };

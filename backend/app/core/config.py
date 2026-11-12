@@ -77,6 +77,14 @@ class Settings(BaseSettings):
     # ── Background jobs ───────────────────────────────────────────────────────
     JOBS_ENABLED: bool = True
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        """Normalize legacy postgres:// URLs (e.g. Railway/Render) for SQLAlchemy 2.x."""
+        if isinstance(v, str) and v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql://", 1)
+        return v
+
     @field_validator("ALLOWED_ORIGINS", "ALLOWED_FILE_TYPES", mode="after")
     @classmethod
     def parse_comma_separated_list(cls, v: Union[str, List[str]]) -> List[str]:

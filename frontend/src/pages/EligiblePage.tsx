@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useApiMode } from '@/context/ApiModeContext';
 import { useLanguage } from '@/context/LanguageContext';
+import { isAuthenticationError } from '@/utils/errors';
+import { getCategoryLabel, pickLang } from '@/utils/i18n';
 import { eligibilityService } from '@/services/api/eligibilityService';
 import { schemeService } from '@/services/api/schemeService';
 import { Scheme, EligibilityResult, isProfileComplete, SchemeCategory } from '@/types';
@@ -9,6 +12,8 @@ import { Card, CardContent, CardFooter } from '@/components/common/Card';
 import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { Spinner } from '@/components/common/Spinner';
+import { AuthPromptCard } from '@/components/common/AuthPromptCard';
+import { LoginModal } from '@/components/common/LoginModal';
 import { EligibilityResultModal } from '@/components/common/EligibilityResultModal';
 import {
   CheckCircle2,
@@ -16,7 +21,6 @@ import {
   HelpCircle,
   ExternalLink,
   ShieldCheck,
-  UserCheck,
   Sparkles,
   Sprout,
   Home,
@@ -34,11 +38,15 @@ interface MergedSchemeResult {
 }
 
 export const EligiblePage: React.FC = () => {
-  const { profile, isAuthenticated, token } = useAuth();
+  const { profile, isAuthenticated, token, isLoading: authLoading } = useAuth();
+  const { isMockMode } = useApiMode();
   const { t, language } = useLanguage();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState<boolean>(true);
+  const [errorType, setErrorType] = useState<'auth' | 'network' | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  const [isLoginOpen, setIsLoginOpen] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [eligibleList, setEligibleList] = useState<MergedSchemeResult[]>([]);
   const [potentialList, setPotentialList] = useState<MergedSchemeResult[]>([]);
@@ -97,11 +105,16 @@ export const EligiblePage: React.FC = () => {
   };
 
   const loadEvaluatedSchemes = async () => {
-    if (!token && !profile) {
+    if (authLoading) return;
+    if (!isMockMode && !isAuthenticated && !token && !profile) {
+      setErrorType(null);
+      setErrorDetail(null);
       setLoading(false);
       return;
     }
     setLoading(true);
+    setErrorType(null);
+    setErrorDetail(null);
     try {
       const [evalRes, allSchemes] = await Promise.all([
         eligibilityService.evaluateAll({ include_pending: true }),
@@ -148,8 +161,15 @@ export const EligiblePage: React.FC = () => {
       setPotentialList(potential);
       setInsufficientList(insufficient);
       setIneligibleList(ineligible);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load eligible schemes:', err);
+      if (isAuthenticationError(err)) {
+        setErrorType('auth');
+        setErrorDetail(null);
+      } else {
+        setErrorType('network');
+        setErrorDetail(err?.message || null);
+      }
     } finally {
       setLoading(false);
     }
@@ -157,7 +177,7 @@ export const EligiblePage: React.FC = () => {
 
   useEffect(() => {
     loadEvaluatedSchemes();
-  }, [profile, token]);
+  }, [profile, token, isAuthenticated, authLoading, isMockMode]);
 
   const profileComplete = isProfileComplete(profile);
 
@@ -171,32 +191,64 @@ export const EligiblePage: React.FC = () => {
   const filteredInsufficient = filterByCategory(insufficientList);
   const filteredIneligible = filterByCategory(ineligibleList);
 
-  if (!isAuthenticated && !profile) {
+  if (authLoading) {
+    return (
+      <Spinner
+        size="lg"
+        label={pickLang(
+          language,
+          'Checking citizen session...',
+          'नागरिक सत्र सत्यापित हो रहा है...',
+          'नागरिक सत्र तपासले जात आहे...'
+        )}
+      />
+    );
+  }
+
+  if ((!isMockMode && !isAuthenticated && !profile) || errorType === 'auth') {
     return (
       <div className="max-w-4xl mx-auto py-12 px-4 space-y-6">
-        <div className="bg-white rounded-3xl border border-navy/8 p-8 sm:p-12 text-center space-y-4 shadow-subtle">
-          <div className="w-16 h-16 rounded-3xl bg-saffron-light text-saffron-dark flex items-center justify-center mx-auto border border-saffron/30">
-            <UserCheck className="w-8 h-8" />
-          </div>
-          <h2 className="text-2xl sm:text-3xl font-bold font-editorial text-navy">
-            {language === 'hi' ? 'अपनी व्यक्तिगत पात्रता जांचें' : 'Personalized Scheme Eligibility'}
-          </h2>
-          <p className="text-sm text-navy/65 max-w-lg mx-auto leading-relaxed">
-            {language === 'hi'
-              ? 'अपनी व्यक्तिगत प्रोफ़ाइल के आधार पर सीधे आधिकारिक सरकारी मानदंडों के विरुद्ध मूल्यांकन प्राप्त करने के लिए कृपया साइन इन करें।'
-              : 'Sign in or create a citizen account to automatically evaluate all central and state schemes against your verified profile attributes.'}
-          </p>
-          <div className="pt-2 flex justify-center gap-3">
-            <Button variant="saffron" size="md" onClick={() => navigate('/onboarding')}>
-              {language === 'hi' ? 'खाता बनाएं / ऑनबोर्डिंग' : 'Get Started / Register'}
-            </Button>
-            <Link to="/schemes">
-              <Button variant="outline" size="md">
-                {language === 'hi' ? 'संपूर्ण कैटलॉग देखें' : 'Browse All Schemes'}
+        <AuthPromptCard
+          kind="auth"
+          title={pickLang(
+            language,
+            'Personalized Scheme Eligibility',
+            'अपनी व्यक्तिगत पात्रता जांचें',
+            'तुमची वैयक्तिक योजना पात्रता तपासा'
+          )}
+          description={pickLang(
+            language,
+            'Sign in or create a citizen account to automatically evaluate all central and state schemes against your verified profile attributes.',
+            'अपनी व्यक्तिगत प्रोफ़ाइल के आधार पर सीधे आधिकारिक सरकारी मानदंडों के विरुद्ध मूल्यांकन प्राप्त करने के लिए कृपया साइन इन करें।',
+            'तुमच्या वैयक्तिक प्रोफाइलच्या आधारे केंद्र व राज्य शासकीय योजनांची पात्रता तपासण्यासाठी कृपया लॉग इन करा किंवा नवीन खाते तयार करा.'
+          )}
+          onSignIn={() => setIsLoginOpen(true)}
+          secondaryAction={
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant="outline" size="md" onClick={() => navigate('/onboarding')}>
+                {pickLang(language, 'Get Started / Register', 'खाता बनाएं / ऑनबोर्डिंग', 'नवीन नोंदणी / ऑनबोर्डिंग')}
               </Button>
-            </Link>
-          </div>
-        </div>
+              <Link to="/schemes">
+                <Button variant="outline" size="md">
+                  {pickLang(language, 'Browse All Schemes', 'संपूर्ण कैटलॉग देखें', 'सर्व योजना पहा')}
+                </Button>
+              </Link>
+            </div>
+          }
+        />
+        <LoginModal isOpen={isLoginOpen} onClose={() => setIsLoginOpen(false)} />
+      </div>
+    );
+  }
+
+  if (errorType === 'network') {
+    return (
+      <div className="max-w-4xl mx-auto py-12 px-4">
+        <AuthPromptCard
+          kind="network"
+          errorDetail={errorDetail}
+          onRetry={loadEvaluatedSchemes}
+        />
       </div>
     );
   }
@@ -208,27 +260,37 @@ export const EligiblePage: React.FC = () => {
         <div className="space-y-1.5">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-light text-sage-dark text-xs font-semibold border border-sage/30">
             <ShieldCheck className="w-3.5 h-3.5 text-sage-green" />
-            <span>{language === 'hi' ? 'सटीक पात्रता मूल्यांकन' : 'Deterministic Eligibility Evaluator'}</span>
+            <span>
+              {pickLang(
+                language,
+                'Deterministic Eligibility Evaluator',
+                'सटीक पात्रता मूल्यांकन',
+                'अचूक पात्रता तपासणी प्रणाली'
+              )}
+            </span>
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold font-editorial text-navy tracking-tight">
-            {language === 'hi' ? 'आपकी पात्र योजनाएं' : 'Your Eligible Schemes'}
+            {pickLang(language, 'Your Eligible Schemes', 'आपकी पात्र योजनाएं', 'तुमच्या पात्र योजना')}
           </h1>
           <p className="text-xs sm:text-sm text-navy/60 max-w-2xl leading-relaxed">
-            {language === 'hi'
-              ? `नागरिक: ${profile?.full_name || 'नागरिक'} (${profile?.district || 'जिला'}, ${profile?.state || 'राज्य'}) के लिए नियमों के अनुसार मूल्यांकित योजनाएं।`
-              : `Schemes evaluated directly against the verified profile of ${profile?.full_name || 'Citizen'} (${profile?.district || 'District'}, ${profile?.state || 'State'}) using official statutory rules.`}
+            {pickLang(
+              language,
+              `Schemes evaluated directly against the verified profile of ${profile?.full_name || 'Citizen'} (${profile?.district || 'District'}, ${profile?.state || 'State'}) using official statutory rules.`,
+              `नागरिक: ${profile?.full_name || 'नागरिक'} (${profile?.district || 'जिला'}, ${profile?.state || 'राज्य'}) के लिए नियमों के अनुसार मूल्यांकित योजनाएं।`,
+              `नागरिक: ${profile?.full_name || 'नागरिक'} (${profile?.district || 'जिल्हा'}, ${profile?.state || 'राज्य'}) यांच्या प्रोफाइलनुसार शासकीय नियमांच्या आधारे तपासलेल्या योजना.`
+            )}
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0">
           <Link to="/schemes">
             <Button variant="outline" size="sm">
-              {language === 'hi' ? 'संपूर्ण कैटलॉग' : 'View Full Catalogue'}
+              {pickLang(language, 'View Full Catalogue', 'संपूर्ण कैटलॉग', 'संपूर्ण योजना सूची')}
             </Button>
           </Link>
           <Link to="/onboarding">
             <Button variant="outline" size="sm">
-              {language === 'hi' ? 'प्रोफ़ाइल बदलें' : 'Update Profile'}
+              {pickLang(language, 'Update Profile', 'प्रोफ़ाइल बदलें', 'प्रोफाइल बदला')}
             </Button>
           </Link>
         </div>
@@ -243,18 +305,26 @@ export const EligiblePage: React.FC = () => {
             </div>
             <div className="space-y-0.5">
               <h4 className="font-bold text-sm text-amber-950">
-                {language === 'hi' ? 'आपकी नागरिक प्रोफ़ाइल अधूरी है' : 'Your Citizen Profile is Incomplete'}
+                {pickLang(
+                  language,
+                  'Your Citizen Profile is Incomplete',
+                  'आपकी नागरिक प्रोफ़ाइल अधूरी है',
+                  'तुमची नागरिक प्रोफाइल अपूर्ण आहे'
+                )}
               </h4>
               <p className="text-xs text-amber-900/80 leading-relaxed max-w-2xl">
-                {language === 'hi'
-                  ? 'सटीक मूल्यांकन के लिए जन्म तिथि, लिंग, पारिवारिक आय या भूमि स्वामित्व जैसी आवश्यक जानकारी दर्ज करें ताकि सभी योजनाएं सही ढंग से मूल्यांकित हों।'
-                  : 'Some schemes require specific attributes (e.g. landholding, gender, residence type) for definitive evaluation. Complete your profile to unlock accurate recommendations.'}
+                {pickLang(
+                  language,
+                  'Some schemes require specific attributes (e.g. landholding, gender, residence type) for definitive evaluation. Complete your profile to unlock accurate recommendations.',
+                  'सटीक मूल्यांकन के लिए जन्म तिथि, लिंग, पारिवारिक आय या भूमि स्वामित्व जैसी आवश्यक जानकारी दर्ज करें ताकि सभी योजनाएं सही ढंग से मूल्यांकित हों।',
+                  'सर्व योजनांची अचूक पात्रता तपासण्यासाठी जन्मतारीख, लिंग, कुटुंबाचे उत्पन्न किंवा शेतजमीन यांसारखी आवश्यक माहिती भरा.'
+                )}
               </p>
             </div>
           </div>
           <Link to="/onboarding" className="shrink-0 w-full sm:w-auto">
             <Button variant="saffron" size="sm" className="w-full sm:w-auto">
-              {language === 'hi' ? 'प्रोफ़ाइल पूर्ण करें' : 'Complete Profile'}
+              {pickLang(language, 'Complete Profile', 'प्रोफ़ाइल पूर्ण करें', 'प्रोफाइल पूर्ण करा')}
             </Button>
           </Link>
         </div>
@@ -274,14 +344,22 @@ export const EligiblePage: React.FC = () => {
                   : 'bg-ivory-100 text-navy/70 border-navy/10 hover:border-navy/25 hover:text-navy'
               }`}
             >
-              {language === 'hi' ? cat.labelHi : cat.labelEn}
+              {getCategoryLabel(language, cat)}
             </button>
           );
         })}
       </div>
 
       {loading ? (
-        <Spinner size="lg" label={language === 'hi' ? 'आपकी पात्रता का मूल्यांकन किया जा रहा है...' : 'Evaluating schemes against your verified profile in PostgreSQL...'} />
+        <Spinner
+          size="lg"
+          label={pickLang(
+            language,
+            'Evaluating schemes against your verified profile in PostgreSQL...',
+            'आपकी पात्रता का मूल्यांकन किया जा रहा है...',
+            'तुमच्या प्रोफाइलनुसार पात्रतेची तपासणी सुरू आहे...'
+          )}
+        />
       ) : (
         <div className="space-y-10">
           {/* SECTION 1: FULLY ELIGIBLE SCHEMES */}
@@ -293,15 +371,20 @@ export const EligiblePage: React.FC = () => {
                 </div>
                 <div>
                   <h2 className="text-lg sm:text-xl font-bold font-editorial text-navy">
-                    {language === 'hi' ? 'पात्र योजनाएं (पूर्णतः योग्य)' : 'Eligible Schemes'}
+                    {pickLang(language, 'Eligible Schemes', 'पात्र योजनाएं (पूर्णतः योग्य)', 'पात्र योजना (पूर्णपणे पात्र)')}
                   </h2>
                   <p className="text-xs text-navy/50">
-                    {language === 'hi' ? 'सभी अनिवार्य शर्तें पूर्ण हैं' : 'All evaluated criteria matched your profile'}
+                    {pickLang(
+                      language,
+                      'All evaluated criteria matched your profile',
+                      'सभी अनिवार्य शर्तें पूर्ण हैं',
+                      'सर्व आवश्यक पात्रता अटी पूर्ण आहेत'
+                    )}
                   </p>
                 </div>
               </div>
               <Badge variant="eligible">
-                {filteredEligible.length} {language === 'hi' ? 'योजनाएं' : 'Schemes'}
+                {filteredEligible.length} {pickLang(language, 'Schemes', 'योजनाएं', 'योजना')}
               </Badge>
             </div>
 
@@ -384,15 +467,25 @@ export const EligiblePage: React.FC = () => {
                 </div>
                 <div>
                   <h2 className="text-lg sm:text-xl font-bold font-editorial text-navy">
-                    {language === 'hi' ? 'संभावित पात्र योजनाएं' : 'Potentially Eligible Schemes'}
+                    {pickLang(
+                      language,
+                      'Potentially Eligible Schemes',
+                      'संभावित पात्र योजनाएं',
+                      'संभाव्य पात्र योजना'
+                    )}
                   </h2>
                   <p className="text-xs text-navy/50">
-                    {language === 'hi' ? 'प्राथमिक शर्तें पूर्ण, आवश्यक दस्तावेज या सत्यापन बाकी' : 'Baseline conditions match; requires supporting documents or verification'}
+                    {pickLang(
+                      language,
+                      'Baseline conditions match; requires supporting documents or verification',
+                      'प्राथमिक शर्तें पूर्ण, आवश्यक दस्तावेज या सत्यापन बाकी',
+                      'प्राथमिक अटी पूर्ण आहेत; संबंधित कागदपत्रे किंवा पडताळणी आवश्यक'
+                    )}
                   </p>
                 </div>
               </div>
               <Badge variant="potentially_eligible">
-                {filteredPotential.length} {language === 'hi' ? 'योजनाएं' : 'Schemes'}
+                {filteredPotential.length} {pickLang(language, 'Schemes', 'योजनाएं', 'योजना')}
               </Badge>
             </div>
 
@@ -477,15 +570,25 @@ export const EligiblePage: React.FC = () => {
                   </div>
                   <div>
                     <h2 className="text-lg sm:text-xl font-bold font-editorial text-navy">
-                      {language === 'hi' ? 'अधूरी जानकारी वाली योजनाएं (अधिक विवरण आवश्यक)' : 'Information Required for Evaluation'}
+                      {pickLang(
+                        language,
+                        'Information Required for Evaluation',
+                        'अधूरी जानकारी वाली योजनाएं (अधिक विवरण आवश्यक)',
+                        'अपूर्ण माहिती असलेल्या योजना (अधिक तपशील आवश्यक)'
+                      )}
                     </h2>
                     <p className="text-xs text-navy/50">
-                      {language === 'hi' ? 'इन योजनाओं का मूल्यांकन करने के लिए प्रोफ़ाइल में कुछ फ़ील्ड छूटे हुए हैं' : 'Missing profile attributes prevent complete determination'}
+                      {pickLang(
+                        language,
+                        'Missing profile attributes prevent complete determination',
+                        'इन योजनाओं का मूल्यांकन करने के लिए प्रोफ़ाइल में कुछ फ़ील्ड छूटे हुए हैं',
+                        'या योजनांच्या तपासणीसाठी प्रोफाइलमध्ये काही तपशील भरणे बाकी आहे'
+                      )}
                     </p>
                   </div>
                 </div>
                 <Badge variant="insufficient_information">
-                  {filteredInsufficient.length} {language === 'hi' ? 'योजनाएं' : 'Schemes'}
+                  {filteredInsufficient.length} {pickLang(language, 'Schemes', 'योजनाएं', 'योजना')}
                 </Badge>
               </div>
 
@@ -540,7 +643,12 @@ export const EligiblePage: React.FC = () => {
                 <AlertTriangle className="w-4 h-4 text-navy/50" />
                 <div>
                   <span className="text-sm font-bold text-navy">
-                    {language === 'hi' ? 'वर्तमान में अपात्र योजनाएं देखें' : 'Schemes Not Eligible Based on Current Profile'}
+                    {pickLang(
+                      language,
+                      'Schemes Not Eligible Based on Current Profile',
+                      'वर्तमान में अपात्र योजनाएं देखें',
+                      'सध्याच्या प्रोफाइलनुसार अपात्र योजना पहा'
+                    )}
                   </span>
                   <span className="text-xs text-navy/50 block">
                     {filteredIneligible.length} schemes where criteria did not match

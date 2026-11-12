@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useApiMode } from '@/context/ApiModeContext';
 import { useLanguage } from '@/context/LanguageContext';
+import { isAuthenticationError } from '@/utils/errors';
+import { pickLang } from '@/utils/i18n';
 import { applicationService } from '@/services/api/applicationService';
 import { notificationService } from '@/services/api/notificationService';
 import { eligibilityService } from '@/services/api/eligibilityService';
@@ -12,6 +15,8 @@ import { Card, CardContent } from '@/components/common/Card';
 import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { Spinner } from '@/components/common/Spinner';
+import { AuthPromptCard } from '@/components/common/AuthPromptCard';
+import { LoginModal } from '@/components/common/LoginModal';
 import {
   Sparkles,
   FolderKanban,
@@ -32,7 +37,8 @@ interface RecommendedSchemeItem {
 }
 
 export const DashboardPage: React.FC = () => {
-  const { profile, token } = useAuth();
+  const { profile, token, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isMockMode } = useApiMode();
   const { t, language } = useLanguage();
 
   const [applications, setApplications] = useState<ApplicationDraft[]>([]);
@@ -41,70 +47,155 @@ export const DashboardPage: React.FC = () => {
   const [eligibleCount, setEligibleCount] = useState<number>(0);
   const [vaultDocCount, setVaultDocCount] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<'auth' | 'network' | null>(null);
+  const [loadErrorDetail, setLoadErrorDetail] = useState<string | null>(null);
+  const [isLoginOpen, setIsLoginOpen] = useState<boolean>(false);
 
-  useEffect(() => {
-    const loadDashboardData = async () => {
-      setLoading(true);
-      try {
-        const [apps, notifs, userDocs, evalRes, allSchemes] = await Promise.all([
-          applicationService.getApplications().catch(() => []),
-          notificationService.getNotifications().catch(() => []),
-          documentService.getUserDocuments().catch(() => []),
-          eligibilityService.evaluateAll({ include_pending: true }).catch(() => ({
+  const loadDashboardData = useCallback(async () => {
+    if (authLoading) return;
+    if (!isMockMode && !isAuthenticated && !token && !profile) {
+      setLoadError(null);
+      setLoadErrorDetail(null);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setLoadError(null);
+    setLoadErrorDetail(null);
+    try {
+      let authFailed = false;
+      let coreNetworkErr: string | null = null;
+      const trackErr = (err: unknown, isCore = false) => {
+        if (isAuthenticationError(err)) {
+          authFailed = true;
+        } else if (isCore && !coreNetworkErr) {
+          coreNetworkErr = (err as any)?.message || null;
+        }
+      };
+
+      const [apps, notifs, userDocs, evalRes, allSchemes] = await Promise.all([
+        applicationService.getApplications().catch((err) => {
+          trackErr(err);
+          return [];
+        }),
+        notificationService.getNotifications().catch((err) => {
+          trackErr(err);
+          return [];
+        }),
+        documentService.getUserDocuments().catch((err) => {
+          trackErr(err);
+          return [];
+        }),
+        eligibilityService.evaluateAll({ include_pending: true }).catch((err) => {
+          trackErr(err, true);
+          return {
             total_evaluated: 0,
             eligible_count: 0,
             ineligible_count: 0,
             unknown_count: 0,
             results: [],
-          })),
-          schemeService.getSchemes({ limit: 50, include_pending: true }).catch(() => []),
-        ]);
+          };
+        }),
+        schemeService.getSchemes({ limit: 50, include_pending: true }).catch((err) => {
+          trackErr(err, true);
+          return [];
+        }),
+      ]);
 
-        setApplications(apps);
-        setNotifications(notifs);
-        setVaultDocCount(userDocs.length);
+      if (authFailed) {
+        setLoadError('auth');
+        return;
+      }
+      if (coreNetworkErr && apps.length === 0 && allSchemes.length === 0) {
+        setLoadError('network');
+        setLoadErrorDetail(coreNetworkErr);
+        return;
+      }
 
-        const schemeMap = new Map<string, Scheme>();
-        allSchemes.forEach((s) => {
-          schemeMap.set(s.id, s);
-          if (s.scheme_code) {
-            schemeMap.set(s.scheme_code.toUpperCase(), s);
-            schemeMap.set(s.scheme_code.toLowerCase(), s);
-          }
-        });
+      setApplications(apps);
+      setNotifications(notifs);
+      setVaultDocCount(userDocs.length);
 
-        const matches: RecommendedSchemeItem[] = [];
-        let count = 0;
+      const schemeMap = new Map<string, Scheme>();
+      allSchemes.forEach((s) => {
+        schemeMap.set(s.id, s);
+        if (s.scheme_code) {
+          schemeMap.set(s.scheme_code.toUpperCase(), s);
+          schemeMap.set(s.scheme_code.toLowerCase(), s);
+        }
+      });
 
-        for (const res of evalRes.results) {
-          if (res.result === 'eligible' || res.result === 'potentially_eligible') {
-            count++;
-            const s =
-              schemeMap.get(res.scheme_id) ||
-              (res.scheme_code ? schemeMap.get(res.scheme_code) : undefined) ||
-              (res.scheme_code ? schemeMap.get(res.scheme_code.toUpperCase()) : undefined) ||
-              allSchemes.find((item) => item.scheme_code?.toLowerCase() === res.scheme_code?.toLowerCase());
+      const matches: RecommendedSchemeItem[] = [];
+      let count = 0;
 
-            if (s) {
-              matches.push({ scheme: s, eligibility: res });
-            }
+      for (const res of evalRes.results) {
+        if (res.result === 'eligible' || res.result === 'potentially_eligible') {
+          count++;
+          const s =
+            schemeMap.get(res.scheme_id) ||
+            (res.scheme_code ? schemeMap.get(res.scheme_code) : undefined) ||
+            (res.scheme_code ? schemeMap.get(res.scheme_code.toUpperCase()) : undefined) ||
+            allSchemes.find((item) => item.scheme_code?.toLowerCase() === res.scheme_code?.toLowerCase());
+
+          if (s) {
+            matches.push({ scheme: s, eligibility: res });
           }
         }
-
-        setEligibleCount(count);
-        setRecommendedSchemes(matches.slice(0, 4));
-      } catch (err) {
-        console.error('Failed to load dashboard data:', err);
-      } finally {
-        setLoading(false);
       }
-    };
 
+      setEligibleCount(count);
+      setRecommendedSchemes(matches.slice(0, 4));
+    } catch (err: any) {
+      console.error('Failed to load dashboard data:', err);
+      if (isAuthenticationError(err)) {
+        setLoadError('auth');
+      } else {
+        setLoadError('network');
+        setLoadErrorDetail(err?.message || null);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [profile, token, isAuthenticated, authLoading, isMockMode]);
+
+  useEffect(() => {
     loadDashboardData();
-  }, [profile, token]);
+  }, [loadDashboardData]);
 
-  if (loading) {
-    return <Spinner size="lg" label={language === 'hi' ? 'डैशबोर्ड लोड हो रहा है...' : 'Loading citizen dashboard...'} />;
+  if (authLoading || loading) {
+    return (
+      <Spinner
+        size="lg"
+        label={pickLang(
+          language,
+          'Loading citizen dashboard...',
+          'डैशबोर्ड लोड हो रहा है...',
+          'नागरिक डॅशबोर्ड लोड होत आहे...'
+        )}
+      />
+    );
+  }
+
+  if ((!isMockMode && !isAuthenticated && !profile) || loadError === 'auth') {
+    return (
+      <div className="py-10 px-4">
+        <AuthPromptCard kind="auth" onSignIn={() => setIsLoginOpen(true)} />
+        <LoginModal isOpen={isLoginOpen} onClose={() => setIsLoginOpen(false)} />
+      </div>
+    );
+  }
+
+  if (loadError === 'network') {
+    return (
+      <div className="py-10 px-4">
+        <AuthPromptCard
+          kind="network"
+          errorDetail={loadErrorDetail}
+          onRetry={loadDashboardData}
+        />
+      </div>
+    );
   }
 
   const awaitingCount = applications.filter((a) => a.lifecycle_state === 'awaiting_confirmation').length;
@@ -119,22 +210,34 @@ export const DashboardPage: React.FC = () => {
         <div className="space-y-2.5 z-10">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage-light text-sage-dark text-xs font-semibold border border-sage/30">
             <UserCheck className="w-3.5 h-3.5" />
-            <span>{language === 'hi' ? 'नागरिक खाता सक्रिय' : 'Citizen Account Active'}</span>
+            <span>
+              {pickLang(language, 'Citizen Account Active', 'नागरिक खाता सक्रिय', 'नागरिक खाते सक्रिय')}
+            </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold font-editorial text-navy tracking-tight">
-            {language === 'hi' ? `नमस्ते, ${profile?.full_name || 'नागरिक'}` : `Welcome, ${profile?.full_name || 'Citizen'}`}
+            {pickLang(
+              language,
+              `Welcome, ${profile?.full_name || 'Citizen'}`,
+              `नमस्ते, ${profile?.full_name || 'नागरिक'}`,
+              `नमस्कार, ${profile?.full_name || 'नागरिक'}`
+            )}
           </h1>
           <p className="text-xs sm:text-sm text-navy/60 max-w-xl leading-relaxed">
             {profile
-              ? `${profile.district || 'District'}, ${profile.state || 'State'} • ${language === 'hi' ? 'व्यवसाय' : 'Occupation'}: ${profile.occupation || 'Citizen'} • ${language === 'hi' ? 'आय' : 'Income'}: ₹${(profile.annual_family_income || 0).toLocaleString('en-IN')}`
-              : 'Sign in to access personalized scheme recommendations and applications.'}
+              ? `${profile.district || 'District'}, ${profile.state || 'State'} • ${pickLang(language, 'Occupation', 'व्यवसाय', 'व्यवसाय')}: ${profile.occupation || 'Citizen'} • ${pickLang(language, 'Income', 'आय', 'उत्पन्न')}: ₹${(profile.annual_family_income || 0).toLocaleString('en-IN')}`
+              : pickLang(
+                  language,
+                  'Sign in to access personalized scheme recommendations and applications.',
+                  'व्यक्तिगत योजना सिफारिशें और आवेदन देखने के लिए लॉग इन करें।',
+                  'वैयक्तिक योजना शिफारसी आणि अर्ज पाहण्यासाठी लॉग इन करा.'
+                )}
           </p>
         </div>
 
         <div className="flex items-center gap-3 z-10 shrink-0">
           <Link to="/eligible">
             <Button variant="saffron" size="md" leftIcon={<Sparkles className="w-4 h-4" />}>
-              {language === 'hi' ? 'पात्र योजनाएं' : 'View Eligible'}
+              {pickLang(language, 'View Eligible', 'पात्र योजनाएं', 'पात्र योजना पहा')}
             </Button>
           </Link>
           <Link to="/onboarding">
@@ -154,18 +257,26 @@ export const DashboardPage: React.FC = () => {
             </div>
             <div className="space-y-0.5">
               <h4 className="font-bold text-sm text-amber-950">
-                {language === 'hi' ? 'आपकी प्रोफ़ाइल अधूरी है' : 'Your Profile is Incomplete'}
+                {pickLang(
+                  language,
+                  'Your Profile is Incomplete',
+                  'आपकी प्रोफ़ाइल अधूरी है',
+                  'तुमची प्रोफाइल अपूर्ण आहे'
+                )}
               </h4>
               <p className="text-xs text-amber-900/80 leading-relaxed">
-                {language === 'hi'
-                  ? 'सटीक योजना पात्रता सुनिश्चित करने के लिए अपनी प्रोफ़ाइल में छूटी हुई जानकारी भरें।'
-                  : 'Complete your profile to unlock accurate, deterministic scheme matching against official government rules.'}
+                {pickLang(
+                  language,
+                  'Complete your profile to unlock accurate, deterministic scheme matching against official government rules.',
+                  'सटीक योजना पात्रता सुनिश्चित करने के लिए अपनी प्रोफ़ाइल में छूटी हुई जानकारी भरें।',
+                  'शासकीय नियमांनुसार अचूक पात्रता तपासणीसाठी तुमच्या प्रोफाइलमधील राहिलेला तपशील भरा.'
+                )}
               </p>
             </div>
           </div>
           <Link to="/onboarding" className="shrink-0 w-full sm:w-auto">
             <Button variant="saffron" size="sm" className="w-full sm:w-auto">
-              {language === 'hi' ? 'प्रोफ़ाइल पूर्ण करें' : 'Complete Profile'}
+              {pickLang(language, 'Complete Profile', 'प्रोफ़ाइल पूर्ण करें', 'प्रोफाइल पूर्ण करा')}
             </Button>
           </Link>
         </div>
@@ -177,13 +288,17 @@ export const DashboardPage: React.FC = () => {
         <Link to="/eligible" className="block group">
           <div className="bg-white p-5 rounded-2xl border border-navy/8 shadow-subtle hover:shadow-premium hover:-translate-y-0.5 transition-all duration-200">
             <div className="flex items-center justify-between text-navy/60 mb-2">
-              <span className="text-xs font-semibold tracking-wide uppercase">{language === 'hi' ? 'पात्र योजनाएं' : 'Eligible Schemes'}</span>
+              <span className="text-xs font-semibold tracking-wide uppercase">
+                {pickLang(language, 'Eligible Schemes', 'पात्र योजनाएं', 'पात्र योजना')}
+              </span>
               <div className="w-8 h-8 rounded-xl bg-sage-light flex items-center justify-center text-sage-green group-hover:scale-105 transition-transform">
                 <Award className="w-4 h-4" />
               </div>
             </div>
             <p className="text-3xl font-bold font-editorial text-sage-green">{eligibleCount}</p>
-            <span className="text-[11px] text-navy/50">Personalized matches</span>
+            <span className="text-[11px] text-navy/50">
+              {pickLang(language, 'Personalized matches', 'व्यक्तिगत मिलान', 'वैयक्तिक जुळणाऱ्या योजना')}
+            </span>
           </div>
         </Link>
 
@@ -191,39 +306,51 @@ export const DashboardPage: React.FC = () => {
         <Link to="/applications" className="block group">
           <div className="bg-white p-5 rounded-2xl border border-navy/8 shadow-subtle hover:shadow-premium hover:-translate-y-0.5 transition-all duration-200">
             <div className="flex items-center justify-between text-navy/60 mb-2">
-              <span className="text-xs font-semibold tracking-wide uppercase">{language === 'hi' ? 'कुल आवेदन' : 'Applications'}</span>
+              <span className="text-xs font-semibold tracking-wide uppercase">
+                {pickLang(language, 'Applications', 'कुल आवेदन', 'एकूण अर्ज')}
+              </span>
               <div className="w-8 h-8 rounded-xl bg-ivory-100 flex items-center justify-center text-navy group-hover:scale-105 transition-transform">
                 <FolderKanban className="w-4 h-4" />
               </div>
             </div>
             <p className="text-3xl font-bold font-editorial text-navy">{applications.length}</p>
-            <span className="text-[11px] text-navy/50">Drafted & submitted</span>
+            <span className="text-[11px] text-navy/50">
+              {pickLang(language, 'Drafted & submitted', 'तैयार व प्रस्तुत', 'मसुदा व सादर केलेले')}
+            </span>
           </div>
         </Link>
 
         {/* Card 3: Awaiting Review */}
         <div className="bg-white p-5 rounded-2xl border border-navy/8 shadow-subtle hover:shadow-premium hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between text-navy/60 mb-2">
-            <span className="text-xs font-semibold tracking-wide uppercase">{language === 'hi' ? 'पुष्टि प्रतीक्षित' : 'Awaiting Review'}</span>
+            <span className="text-xs font-semibold tracking-wide uppercase">
+              {pickLang(language, 'Awaiting Review', 'पुष्टि प्रतीक्षित', 'तपासणी प्रलंबित')}
+            </span>
             <div className="w-8 h-8 rounded-xl bg-saffron-light flex items-center justify-center text-saffron-vibrant">
               <Clock className="w-4 h-4" />
             </div>
           </div>
           <p className="text-3xl font-bold font-editorial text-saffron-vibrant">{awaitingCount}</p>
-          <span className="text-[11px] text-navy/50">Requires confirmation</span>
+          <span className="text-[11px] text-navy/50">
+            {pickLang(language, 'Requires confirmation', 'पुष्टि आवश्यक', 'निश्चिती आवश्यक')}
+          </span>
         </div>
 
         {/* Card 4: Verified Documents */}
         <Link to="/documents" className="block group">
           <div className="bg-white p-5 rounded-2xl border border-navy/8 shadow-subtle hover:shadow-premium hover:-translate-y-0.5 transition-all duration-200">
             <div className="flex items-center justify-between text-navy/60 mb-2">
-              <span className="text-xs font-semibold tracking-wide uppercase">{language === 'hi' ? 'दस्तावेज़' : 'Documents Vault'}</span>
+              <span className="text-xs font-semibold tracking-wide uppercase">
+                {pickLang(language, 'Documents Vault', 'दस्तावेज़', 'दस्तऐवज व्हॉल्ट')}
+              </span>
               <div className="w-8 h-8 rounded-xl bg-navy/5 flex items-center justify-center text-navy group-hover:scale-105 transition-transform">
                 <FileCheck className="w-4 h-4" />
               </div>
             </div>
             <p className="text-3xl font-bold font-editorial text-navy">{vaultDocCount}</p>
-            <span className="text-[11px] text-navy/50">Stored in citizen vault</span>
+            <span className="text-[11px] text-navy/50">
+              {pickLang(language, 'Stored in citizen vault', 'दस्तावेज़ वॉल्ट में सुरक्षित', 'नागरिक व्हॉल्टमध्ये संग्रहीत')}
+            </span>
           </div>
         </Link>
       </div>
@@ -234,11 +361,18 @@ export const DashboardPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-sage-green" />
             <h2 className="font-bold font-editorial text-navy text-xl">
-              {language === 'hi' ? 'आपके लिए अनुशंसित योजनाएं' : 'Top Scheme Matches for You'}
+              {pickLang(
+                language,
+                'Top Scheme Matches for You',
+                'आपके लिए अनुशंसित योजनाएं',
+                'तुमच्यासाठी शिफारस केलेल्या योजना'
+              )}
             </h2>
           </div>
           <Link to="/eligible" className="text-xs font-semibold text-saffron-dark hover:text-saffron flex items-center gap-1 group">
-            <span>{language === 'hi' ? 'सभी पात्र योजनाएं देखें' : 'View all eligible schemes'}</span>
+            <span>
+              {pickLang(language, 'View all eligible schemes', 'सभी पात्र योजनाएं देखें', 'सर्व पात्र योजना पहा')}
+            </span>
             <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
           </Link>
         </div>
@@ -246,19 +380,22 @@ export const DashboardPage: React.FC = () => {
         {recommendedSchemes.length === 0 ? (
           <div className="p-8 bg-white rounded-3xl border border-navy/8 text-center space-y-3">
             <p className="text-sm text-navy/60">
-              {language === 'hi'
-                ? 'अभी कोई अनुशंसित योजना नहीं है। संपूर्ण कैटलॉग देखें या अपनी प्रोफ़ाइल अपडेट करें।'
-                : 'No personalized recommendations yet. Browse all schemes or update your citizen profile.'}
+              {pickLang(
+                language,
+                'No personalized recommendations yet. Browse all schemes or update your citizen profile.',
+                'अभी कोई अनुशंसित योजना नहीं है। संपूर्ण कैटलॉग देखें या अपनी प्रोफ़ाइल अपडेट करें।',
+                'अद्याप वैयक्तिक शिफारसी उपलब्ध नाहीत. संपूर्ण योजना सूची पहा किंवा तुमचे प्रोफाइल अद्यतनित करा.'
+              )}
             </p>
             <div className="flex justify-center gap-3">
               <Link to="/schemes">
                 <Button variant="outline" size="sm">
-                  {language === 'hi' ? 'योजनाएं खोजें' : 'Browse Catalogue'}
+                  {pickLang(language, 'Browse Catalogue', 'योजनाएं खोजें', 'योजना पहा')}
                 </Button>
               </Link>
               <Link to="/onboarding">
                 <Button variant="saffron" size="sm">
-                  {language === 'hi' ? 'प्रोफ़ाइल भरें' : 'Complete Profile'}
+                  {pickLang(language, 'Complete Profile', 'प्रोफ़ाइल भरें', 'प्रोफाइल पूर्ण करा')}
                 </Button>
               </Link>
             </div>
@@ -279,15 +416,21 @@ export const DashboardPage: React.FC = () => {
                     <h3 className="font-bold text-navy text-base leading-snug line-clamp-1 font-editorial">
                       {scheme.name}
                     </h3>
-                    <p className="text-xs text-navy/60 line-clamp-2 leading-relaxed mt-1">
-                      {scheme.description}
-                    </p>
+                    {scheme.description && (
+                      <p className="text-xs text-navy/60 line-clamp-2 leading-relaxed mt-1">
+                        {scheme.description}
+                      </p>
+                    )}
                   </div>
 
-                  <div className="p-2.5 rounded-xl bg-sage-light/50 border border-sage/20 text-xs text-navy/80 space-y-0.5">
-                    <span className="text-[10px] uppercase font-bold text-sage-dark block">Benefits</span>
-                    <p className="line-clamp-2">{scheme.benefits}</p>
-                  </div>
+                  {scheme.benefits && (
+                    <div className="p-2.5 rounded-xl bg-sage-light/50 border border-sage/20 text-xs text-navy/80 space-y-0.5">
+                      <span className="text-[10px] uppercase font-bold text-sage-dark block">
+                        {pickLang(language, 'Benefits', 'लाभ', 'फायदे')}
+                      </span>
+                      <p className="line-clamp-2">{scheme.benefits}</p>
+                    </div>
+                  )}
                 </CardContent>
 
                 <div className="p-4 bg-ivory/50 border-t border-navy/6 flex items-center justify-between">
@@ -317,10 +460,10 @@ export const DashboardPage: React.FC = () => {
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="font-bold font-editorial text-navy text-xl">
-              {language === 'hi' ? 'हाल के आवेदन' : 'Recent Applications'}
+              {pickLang(language, 'Recent Applications', 'हाल के आवेदन', 'अलीकडील अर्ज')}
             </h2>
             <Link to="/applications" className="text-xs font-semibold text-saffron-dark hover:text-saffron flex items-center gap-1 group">
-              <span>{language === 'hi' ? 'सभी देखें' : 'View all'}</span>
+              <span>{pickLang(language, 'View all', 'सभी देखें', 'सर्व पहा')}</span>
               <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
             </Link>
           </div>
@@ -328,7 +471,12 @@ export const DashboardPage: React.FC = () => {
           <div className="space-y-3">
             {applications.length === 0 ? (
               <div className="p-6 bg-white rounded-2xl border border-navy/8 text-center text-xs text-navy/50">
-                No active applications. Start by selecting an eligible scheme above.
+                {pickLang(
+                  language,
+                  'No active applications. Start by selecting an eligible scheme above.',
+                  'कोई सक्रिय आवेदन नहीं है। ऊपर दी गई पात्र योजनाओं में से चुनकर शुरुआत करें।',
+                  'सध्या कोणतेही सक्रिय अर्ज नाहीत. वरील पात्र योजनांमधून सुरुवात करा.'
+                )}
               </div>
             ) : (
               applications.map((app) => (
@@ -343,7 +491,7 @@ export const DashboardPage: React.FC = () => {
                           {app.scheme_name || `Application: ${app.scheme_id}`}
                         </h3>
                         <p className="text-xs text-navy/50">
-                          {language === 'hi' ? 'अंतिम अद्यतन' : 'Last updated'}: {new Date(app.updated_at).toLocaleDateString()}
+                          {pickLang(language, 'Last updated', 'अंतिम अद्यतन', 'अखेरचे अद्यतन')}: {new Date(app.updated_at).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
@@ -362,9 +510,7 @@ export const DashboardPage: React.FC = () => {
                           ? 'draft'
                           : app.lifecycle_state;
                         const label = app.legacy_synthetic_submission
-                          ? language === 'hi'
-                            ? 'असत्यापित पैकेट'
-                            : 'UNVERIFIED PACKET'
+                          ? pickLang(language, 'UNVERIFIED PACKET', 'असत्यापित पैकेट', 'अप्रमाणित संच')
                           : badgeState === 'submission_unknown'
                           ? 'SUBMISSION UNKNOWN'
                           : badgeState.toUpperCase().replace(/_/g, ' ');
@@ -372,7 +518,7 @@ export const DashboardPage: React.FC = () => {
                       })()}
                       <Link to="/applications">
                         <Button variant="outline" size="sm">
-                          {language === 'hi' ? 'खोलें' : 'Open'}
+                          {pickLang(language, 'Open', 'खोलें', 'उघडा')}
                         </Button>
                       </Link>
                     </div>
@@ -388,7 +534,7 @@ export const DashboardPage: React.FC = () => {
           <div className="flex items-center justify-between">
             <h2 className="font-bold font-editorial text-navy text-xl flex items-center gap-2">
               <Bell className="w-4 h-4 text-saffron-vibrant" />
-              <span>{language === 'hi' ? 'नवीनतम सूचनाएं' : 'Updates'}</span>
+              <span>{pickLang(language, 'Updates', 'नवीनतम सूचनाएं', 'ताज्या सूचना')}</span>
             </h2>
             <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-navy/5 text-navy/60">
               {notifications.length}
@@ -398,7 +544,7 @@ export const DashboardPage: React.FC = () => {
           <div className="space-y-3">
             {notifications.length === 0 ? (
               <div className="p-6 bg-white rounded-2xl border border-navy/8 text-center text-xs text-navy/50">
-                No new notifications.
+                {pickLang(language, 'No new notifications.', 'कोई नई सूचना नहीं है।', 'कोणत्याही नवीन सूचना नाहीत.')}
               </div>
             ) : (
               notifications.map((n) => (

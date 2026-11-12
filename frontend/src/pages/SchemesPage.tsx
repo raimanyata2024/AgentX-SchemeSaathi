@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { schemeService } from '@/services/api/schemeService';
 import { eligibilityService } from '@/services/api/eligibilityService';
 import { useAuth } from '@/context/AuthContext';
+import { useApiMode } from '@/context/ApiModeContext';
 import { useLanguage } from '@/context/LanguageContext';
+import { isAuthenticationError } from '@/utils/errors';
+import { getCategoryLabel, pickLang } from '@/utils/i18n';
 import { Scheme, SchemeCategory, EligibilityResult } from '@/types';
 import { Card, CardContent, CardFooter } from '@/components/common/Card';
 import { Badge } from '@/components/common/Badge';
@@ -11,6 +14,7 @@ import { Button } from '@/components/common/Button';
 import { Input } from '@/components/common/Input';
 import { Spinner } from '@/components/common/Spinner';
 import { EmptyState } from '@/components/common/EmptyState';
+import { AuthPromptCard } from '@/components/common/AuthPromptCard';
 import { LoginModal } from '@/components/common/LoginModal';
 import { EligibilityResultModal } from '@/components/common/EligibilityResultModal';
 import {
@@ -30,13 +34,16 @@ import {
 
 export const SchemesPage: React.FC = () => {
   const { t, language } = useLanguage();
-  const { profile, token, isAuthenticated } = useAuth();
+  const { token, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isMockMode } = useApiMode();
+  const [searchParams] = useSearchParams();
 
   const [schemes, setSchemes] = useState<Scheme[]>([]);
   const [eligibilityMap, setEligibilityMap] = useState<Record<string, EligibilityResult>>({});
   const [loading, setLoading] = useState<boolean>(true);
-  const [search, setSearch] = useState<string>('');
+  const [search, setSearch] = useState<string>(() => searchParams.get('q') || '');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [fetchError, setFetchError] = useState<{ kind: 'auth' | 'network'; rawDetail?: string | null } | null>(null);
 
   // Check Eligibility modal & execution state
   const [evaluatingSchemeId, setEvaluatingSchemeId] = useState<string | null>(null);
@@ -74,27 +81,59 @@ export const SchemesPage: React.FC = () => {
     }
   };
 
-  const fetchSchemes = async () => {
+  const fetchSchemes = async (overrideQuery?: string) => {
+    if (authLoading) return;
+
+    if (!isAuthenticated && !isMockMode) {
+      setSchemes([]);
+      setFetchError({ kind: 'auth' });
+      setLoading(false);
+      return;
+    }
+
+    const queryText = overrideQuery !== undefined ? overrideQuery : search;
     setLoading(true);
+    setFetchError(null);
     try {
       const data = await schemeService.getSchemes({
-        q: search || undefined,
+        q: queryText || undefined,
         category: selectedCategory || undefined,
         limit: 50,
         include_pending: true,
       });
       setSchemes(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load schemes:', err);
+      setSchemes([]);
+      if (isAuthenticationError(err)) {
+        setFetchError({ kind: 'auth', rawDetail: err?.message || null });
+      } else {
+        setFetchError({ kind: 'network', rawDetail: err?.message || null });
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  // Synchronize ?q= query parameter if navigated from curated cards or bookmarks
+  useEffect(() => {
+    const paramQ = searchParams.get('q') || '';
+    if (paramQ !== search) {
+      setSearch(paramQ);
+      if (!authLoading && (isAuthenticated || isMockMode)) {
+        fetchSchemes(paramQ);
+      }
+    }
+  }, [searchParams]);
+
   // Background fetch of eligibility evaluations if user is logged in
   useEffect(() => {
+    if (authLoading || (!isAuthenticated && !isMockMode)) {
+      setEligibilityMap({});
+      return;
+    }
+
     const fetchEligibility = async () => {
-      if (!token && !profile) return;
       try {
         const evalRes = await eligibilityService.evaluateAll({ include_pending: true });
         const map: Record<string, EligibilityResult> = {};
@@ -113,11 +152,13 @@ export const SchemesPage: React.FC = () => {
     };
 
     fetchEligibility();
-  }, [token, profile]);
+  }, [isAuthenticated, token, authLoading, isMockMode]);
 
   useEffect(() => {
-    fetchSchemes();
-  }, [selectedCategory]);
+    if (!authLoading) {
+      fetchSchemes();
+    }
+  }, [selectedCategory, isAuthenticated, token, authLoading, isMockMode]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,7 +166,7 @@ export const SchemesPage: React.FC = () => {
   };
 
   const handleCheckSchemeEligibility = async (scheme: Scheme) => {
-    if (!token && !profile) {
+    if (!isAuthenticated && !isMockMode) {
       setIsLoginOpen(true);
       return;
     }
@@ -188,15 +229,25 @@ export const SchemesPage: React.FC = () => {
         <div className="space-y-1">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-saffron-light text-saffron-dark text-xs font-semibold border border-saffron/30">
             <ShieldCheck className="w-3.5 h-3.5 text-saffron-vibrant" />
-            <span>{language === 'hi' ? 'सत्यापित केंद्रीय कैटलॉग' : 'Complete Central & State Welfare Catalogue'}</span>
+            <span>
+              {pickLang(
+                language,
+                'Complete Central & State Welfare Catalogue',
+                'सत्यापित केंद्रीय कैटलॉग',
+                'अधिकृत केंद्रीय व राज्य योजना सूची'
+              )}
+            </span>
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold font-editorial text-navy tracking-tight">
-            {language === 'hi' ? 'संपूर्ण सरकारी योजनाएं' : 'All Government Schemes'}
+            {pickLang(language, 'All Government Schemes', 'संपूर्ण सरकारी योजनाएं', 'सर्व शासकीय योजना')}
           </h1>
           <p className="text-xs sm:text-sm text-navy/60 max-w-2xl leading-relaxed">
-            {language === 'hi'
-              ? 'केंद्रीय एवं राज्य कल्याणकारी योजनाओं की संपूर्ण अधिकृत सूची। अपनी पात्रता के अनुसार देखने के लिए "पात्रता" पृष्ठ पर जाएं।'
-              : 'Explore the complete verified catalogue of Indian welfare schemes across all sectors, guidelines and ministries.'}
+            {pickLang(
+              language,
+              'Explore the complete verified catalogue of Indian welfare schemes across all sectors, guidelines and ministries.',
+              'केंद्रीय एवं राज्य कल्याणकारी योजनाओं की संपूर्ण अधिकृत सूची। अपनी पात्रता के अनुसार देखने के लिए "पात्रता" पृष्ठ पर जाएं।',
+              'केंद्र आणि राज्य शासनाच्या सर्व कल्याणकारी योजनांची अधिकृत यादी. तुमच्या प्रोफाइलनुसार पात्र योजना पाहण्यासाठी "पात्र योजना" विभागास भेट द्या.'
+            )}
           </p>
         </div>
 
@@ -204,13 +255,13 @@ export const SchemesPage: React.FC = () => {
           {isAuthenticated && (
             <Link to="/eligible">
               <Button variant="saffron" size="md" leftIcon={<CheckCircle2 className="w-4 h-4" />}>
-                {language === 'hi' ? 'मेरी पात्र योजनाएं' : 'My Eligible Schemes'}
+                {pickLang(language, 'My Eligible Schemes', 'मेरी पात्र योजनाएं', 'माझ्या पात्र योजना')}
               </Button>
             </Link>
           )}
           <Link to="/chat">
             <Button variant="outline" size="md" leftIcon={<Sparkles className="w-4 h-4" />}>
-              {language === 'hi' ? 'साथी से पूछें' : 'Ask AI Saathi'}
+              {pickLang(language, 'Ask AI Saathi', 'साथी से पूछें', 'AI साथीला विचारा')}
             </Button>
           </Link>
         </div>
@@ -222,13 +273,18 @@ export const SchemesPage: React.FC = () => {
           <div className="flex items-center gap-2.5">
             <CheckCircle2 className="w-4 h-4 text-sage-green shrink-0" />
             <p className="text-xs text-navy/80 font-medium">
-              {language === 'hi'
-                ? 'यह पृष्ठ संपूर्ण कैटलॉग प्रदर्शित करता है। अपनी प्रोफ़ाइल के अनुसार मूल्यांकित योजनाएं देखने के लिए पात्र पृष्ठ खोलें।'
-                : 'This page shows the entire available catalogue. To view only schemes tailored to your profile, visit your dedicated Eligible Schemes page.'}
+              {pickLang(
+                language,
+                'This page shows the entire available catalogue. To view only schemes tailored to your profile, visit your dedicated Eligible Schemes page.',
+                'यह पृष्ठ संपूर्ण कैटलॉग प्रदर्शित करता है। अपनी प्रोफ़ाइल के अनुसार मूल्यांकित योजनाएं देखने के लिए पात्र पृष्ठ खोलें।',
+                'हे पृष्ठ संपूर्ण योजना सूची दर्शवते. तुमच्या प्रोफाइलशी जुळणाऱ्या पात्र योजना पाहण्यासाठी "माझ्या पात्र योजना" पृष्ठ उघडा.'
+              )}
             </p>
           </div>
           <Link to="/eligible" className="shrink-0 text-xs font-bold text-sage-dark hover:underline flex items-center gap-1">
-            <span>{language === 'hi' ? 'पात्र योजनाएं खोलें' : 'View Matching Schemes'}</span>
+            <span>
+              {pickLang(language, 'View Matching Schemes', 'पात्र योजनाएं खोलें', 'पात्र योजना पहा')}
+            </span>
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
@@ -239,18 +295,19 @@ export const SchemesPage: React.FC = () => {
         <form onSubmit={handleSearchSubmit} className="flex gap-2 sm:gap-3">
           <div className="flex-1">
             <Input
-              placeholder={
-                language === 'hi'
-                  ? 'योजना खोजें (उदा. किसान, छात्रवृत्ति, आवास, महिला)...'
-                  : 'Search schemes by keyword, ministry, benefits (e.g. farmer, housing, scholarship)...'
-              }
+              placeholder={pickLang(
+                language,
+                'Search schemes by keyword, ministry, benefits (e.g. farmer, housing, scholarship)...',
+                'योजना खोजें (उदा. किसान, छात्रवृत्ति, आवास, महिला)...',
+                'योजना शोधा (उदा. शेतकरी, शिष्यवृत्ती, घरकुल, महिला)...'
+              )}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               leftIcon={<Search className="w-4 h-4 text-navy/40" />}
             />
           </div>
           <Button type="submit" variant="primary" size="md" className="shrink-0 px-6">
-            {language === 'hi' ? 'खोजें' : 'Search'}
+            {pickLang(language, 'Search', 'खोजें', 'शोधा')}
           </Button>
         </form>
 
@@ -268,7 +325,7 @@ export const SchemesPage: React.FC = () => {
                     : 'bg-ivory-100 text-navy/70 border-navy/10 hover:border-navy/25 hover:text-navy'
                 }`}
               >
-                {language === 'hi' ? cat.labelHi : cat.labelEn}
+                {getCategoryLabel(language, cat)}
               </button>
             );
           })}
@@ -276,16 +333,54 @@ export const SchemesPage: React.FC = () => {
       </div>
 
       {/* Schemes Grid */}
-      {loading ? (
-        <Spinner size="lg" label={language === 'hi' ? 'योजनाएं लोड हो रही हैं...' : 'Loading verified schemes catalogue...'} />
+      {loading || authLoading ? (
+        <Spinner
+          size="lg"
+          label={pickLang(
+            language,
+            'Loading verified schemes catalogue...',
+            'योजनाएं लोड हो रही हैं...',
+            'प्रमाणित शासकीय योजना यादी लोड होत आहे...'
+          )}
+        />
+      ) : fetchError ? (
+        <AuthPromptCard
+          kind={fetchError.kind}
+          description={
+            fetchError.kind === 'auth'
+              ? pickLang(
+                  language,
+                  'Please sign in with your citizen account or register to browse the live government welfare schemes catalog.',
+                  'लाइव सरकारी कल्याण योजनाओं की सूची देखने के लिए कृपया अपने नागरिक खाते में लॉग इन करें या नया खाता बनाएं।',
+                  'थेट शासकीय कल्याणकारी योजनांची यादी पाहण्यासाठी कृपया तुमच्या नागरिक खात्यात लॉग इन करा किंवा नवीन नोंदणी करा.'
+                )
+              : undefined
+          }
+          errorDetail={fetchError.rawDetail}
+          onSignIn={() => setIsLoginOpen(true)}
+          onRetry={() => fetchSchemes()}
+          secondaryAction={
+            <Link to="/chat">
+              <Button variant="outline" size="md">
+                {pickLang(language, 'Ask AI Saathi', 'साथी से पूछें', 'AI साथीला विचारा')}
+              </Button>
+            </Link>
+          }
+        />
       ) : schemes.length === 0 ? (
         <EmptyState
-          title={language === 'hi' ? 'कोई योजना नहीं मिली' : 'No Schemes Found'}
-          description={language === 'hi' ? 'कृपया अपनी खोज शब्द बदलें या अन्य श्रेणी चुनें।' : 'Try adjusting your search keywords or selecting another category.'}
-          actionLabel={language === 'hi' ? 'सभी योजनाएं देखें' : 'View All Schemes'}
+          title={pickLang(language, 'No Schemes Found', 'कोई योजना नहीं मिली', 'कोणतीही योजना सापडली नाही')}
+          description={pickLang(
+            language,
+            'Try adjusting your search keywords or selecting another category.',
+            'कृपया अपनी खोज शब्द बदलें या अन्य श्रेणी चुनें।',
+            'कृपया शोध शब्द बदला किंवा दुसरा वर्ग निवडा.'
+          )}
+          actionLabel={pickLang(language, 'View All Schemes', 'सभी योजनाएं देखें', 'सर्व योजना पहा')}
           onAction={() => {
             setSearch('');
             setSelectedCategory('');
+            fetchSchemes('');
           }}
         />
       ) : (
@@ -311,14 +406,28 @@ export const SchemesPage: React.FC = () => {
                     {scheme.name}
                   </Link>
                   <p className="text-xs text-navy/60 line-clamp-2 leading-relaxed">
-                    {scheme.description}
+                    {scheme.description ||
+                      `${scheme.ministry}${
+                        scheme.geographic_scope
+                          ? ` • ${
+                              scheme.geographic_scope === 'central'
+                                ? pickLang(language, 'Central Scheme', 'केंद्रीय योजना', 'केंद्रीय योजना')
+                                : pickLang(language, 'State Scheme', 'राज्य योजना', 'राज्य योजना')
+                            }`
+                          : ''
+                      }`}
                   </p>
                 </div>
 
                 <Link
                   to={`/schemes/${scheme.id}?tab=benefits`}
                   className="p-3 rounded-xl bg-ivory-100/70 hover:bg-saffron-light/60 border border-navy/6 hover:border-saffron/30 space-y-1 block transition-all duration-200 group/benefits cursor-pointer"
-                  title={language === 'hi' ? 'योजना के लाभ देखने के लिए क्लिक करें' : 'Click to view full scheme benefits'}
+                  title={pickLang(
+                    language,
+                    'Click to view full scheme benefits',
+                    'योजना के लाभ देखने के लिए क्लिक करें',
+                    'योजनेचे संपूर्ण लाभ पाहण्यासाठी क्लिक करा'
+                  )}
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] uppercase font-bold text-navy/50 group-hover/benefits:text-saffron-dark tracking-wider flex items-center gap-1">
@@ -326,12 +435,18 @@ export const SchemesPage: React.FC = () => {
                       <span>{t.labels.benefits}</span>
                     </span>
                     <span className="text-[10px] font-semibold text-saffron-dark flex items-center gap-0.5 group-hover/benefits:translate-x-0.5 transition-transform">
-                      <span>{language === 'hi' ? 'लाभ विवरण' : 'View Benefits'}</span>
+                      <span>{pickLang(language, 'View Benefits', 'लाभ विवरण', 'लाभ तपशील')}</span>
                       <ArrowRight className="w-2.5 h-2.5" />
                     </span>
                   </div>
                   <p className="text-xs font-medium text-navy/80 line-clamp-2 leading-relaxed">
-                    {scheme.benefits}
+                    {scheme.benefits ||
+                      pickLang(
+                        language,
+                        'Open Benefits tab for verified financial assistance, disbursement schedule, and guidelines.',
+                        'वित्तीय सहायता व किस्तों की जानकारी के लिए लाभ विवरण खोलें।',
+                        'अधिकृत आर्थिक सहाय्य आणि लाभाची माहिती पाहण्यासाठी लाभ तपशील उघडा.'
+                      )}
                   </p>
                 </Link>
               </CardContent>
@@ -358,17 +473,19 @@ export const SchemesPage: React.FC = () => {
                   </Link>
                 </div>
 
-                <div className="flex items-center justify-end w-full pt-1 border-t border-navy/5">
-                  <a
-                    href={scheme.official_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[11px] text-navy/50 hover:text-navy flex items-center gap-1 transition-colors"
-                  >
-                    <span>Official Portal</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
+                {scheme.official_url && (
+                  <div className="flex items-center justify-end w-full pt-1 border-t border-navy/5">
+                    <a
+                      href={scheme.official_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] text-navy/50 hover:text-navy flex items-center gap-1 transition-colors"
+                    >
+                      <span>{t.labels.officialPortal}</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
               </CardFooter>
             </Card>
           ))}

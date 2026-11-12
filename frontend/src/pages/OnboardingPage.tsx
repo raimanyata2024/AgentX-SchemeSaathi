@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useLanguage } from '@/context/LanguageContext';
+import { pickLang } from '@/utils/i18n';
 import { profileService } from '@/services/api/profileService';
 import { UserProfile } from '@/types';
 import { Card, CardHeader, CardContent, CardFooter } from '@/components/common/Card';
@@ -111,14 +112,14 @@ export const OnboardingPage: React.FC = () => {
   };
 
   const occupations = [
-    { value: 'farmer', label: language === 'hi' ? 'किसान (Farmer)' : 'Farmer' },
-    { value: 'student', label: language === 'hi' ? 'छात्र / छात्रा (Student)' : 'Student' },
-    { value: 'artisan', label: language === 'hi' ? 'कारीगर / शिल्पी (Artisan / Craftsman)' : 'Artisan / Craftsman' },
-    { value: 'daily_wager', label: language === 'hi' ? 'दैनिक मजदूर (Daily Wage Laborer)' : 'Daily Wage Laborer' },
-    { value: 'self_employed', label: language === 'hi' ? 'स्व-व्यवसायी / दुकानदार (Self-Employed)' : 'Self-Employed' },
-    { value: 'salaried', label: language === 'hi' ? 'वेतनभोगी (Salaried Employee)' : 'Salaried Employee' },
-    { value: 'unemployed', label: language === 'hi' ? 'बेरोजगार (Unemployed Youth)' : 'Unemployed Youth' },
-    { value: 'homemaker', label: language === 'hi' ? 'गृहिणी (Homemaker)' : 'Homemaker' },
+    { value: 'farmer', label: pickLang(language, 'Farmer', 'किसान (Farmer)', 'शेतकरी (Farmer)') },
+    { value: 'student', label: pickLang(language, 'Student', 'छात्र / छात्रा (Student)', 'विद्यार्थी (Student)') },
+    { value: 'artisan', label: pickLang(language, 'Artisan / Craftsman', 'कारीगर / शिल्पी (Artisan / Craftsman)', 'कारागीर / शिल्पकार') },
+    { value: 'daily_wager', label: pickLang(language, 'Daily Wage Laborer', 'दैनिक मजदूर (Daily Wage Laborer)', 'दैनिक मजुरी कामगार') },
+    { value: 'self_employed', label: pickLang(language, 'Self-Employed', 'स्व-व्यवसायी / दुकानदार (Self-Employed)', 'स्वयंरोजगार / दुकानदार') },
+    { value: 'salaried', label: pickLang(language, 'Salaried Employee', 'वेतनभोगी (Salaried Employee)', 'पगारदार कर्मचारी') },
+    { value: 'unemployed', label: pickLang(language, 'Unemployed Youth', 'बेरोजगार (Unemployed Youth)', 'बेरोजगार युवक') },
+    { value: 'homemaker', label: pickLang(language, 'Homemaker', 'गृहिणी (Homemaker)', 'गृहिणी') },
   ];
 
   const casteCategories = [
@@ -130,19 +131,19 @@ export const OnboardingPage: React.FC = () => {
   ];
 
   const genderOptions = [
-    { value: 'male', label: language === 'hi' ? 'पुरुष (Male)' : 'Male' },
-    { value: 'female', label: language === 'hi' ? 'महिला (Female)' : 'Female' },
-    { value: 'transgender', label: language === 'hi' ? 'ट्रांसजेंडर (Transgender)' : 'Transgender' },
-    { value: 'other', label: language === 'hi' ? 'अन्य (Other)' : 'Other' },
+    { value: 'male', label: pickLang(language, 'Male', 'पुरुष (Male)', 'पुरुष') },
+    { value: 'female', label: pickLang(language, 'Female', 'महिला (Female)', 'महिला') },
+    { value: 'transgender', label: pickLang(language, 'Transgender', 'ट्रांसजेंडर (Transgender)', 'तृतीयपंथी') },
+    { value: 'other', label: pickLang(language, 'Other', 'अन्य (Other)', 'इतर') },
   ];
 
   const missingFields: string[] = [];
-  if (!fullName.trim()) missingFields.push(language === 'hi' ? 'पूरा नाम' : 'Full Name');
-  if (!dob) missingFields.push(language === 'hi' ? 'जन्म तिथि' : 'Date of Birth');
-  if (!gender) missingFields.push(language === 'hi' ? 'लिंग' : 'Gender');
-  if (!stateName.trim()) missingFields.push(language === 'hi' ? 'राज्य' : 'State');
-  if (!district.trim()) missingFields.push(language === 'hi' ? 'जिला' : 'District');
-  if (!income) missingFields.push(language === 'hi' ? 'वार्षिक आय' : 'Annual Income');
+  if (!fullName.trim()) missingFields.push(pickLang(language, 'Full Name', 'पूरा नाम', 'संपूर्ण नाव'));
+  if (!dob) missingFields.push(pickLang(language, 'Date of Birth', 'जन्म तिथि', 'जन्मतारीख'));
+  if (!gender) missingFields.push(pickLang(language, 'Gender', 'लिंग', 'लिंग'));
+  if (!stateName.trim()) missingFields.push(pickLang(language, 'State', 'राज्य', 'राज्य'));
+  if (!district.trim()) missingFields.push(pickLang(language, 'District', 'जिला', 'जिल्हा'));
+  if (!income) missingFields.push(pickLang(language, 'Annual Income', 'वार्षिक आय', 'वार्षिक उत्पन्न'));
 
   return (
     <div className="max-w-2xl mx-auto space-y-7">
@@ -150,15 +151,23 @@ export const OnboardingPage: React.FC = () => {
       <div className="space-y-1">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-saffron-light text-saffron-dark text-xs font-semibold border border-saffron/30">
           <User className="w-3.5 h-3.5 text-saffron-vibrant" />
-          <span>{language === 'hi' ? 'नागरिक प्रोफ़ाइल' : 'Citizen Profile'}</span>
+          <span>{pickLang(language, 'Citizen Profile', 'नागरिक प्रोफ़ाइल', 'नागरिक प्रोफाइल')}</span>
         </div>
         <h1 className="text-3xl sm:text-4xl font-bold font-editorial text-navy tracking-tight">
-          {language === 'hi' ? 'नागरिक विवरण व पात्रता प्रोफाइल' : 'Citizen Profile & Scheme Criteria'}
+          {pickLang(
+            language,
+            'Citizen Profile & Scheme Criteria',
+            'नागरिक विवरण व पात्रता प्रोफाइल',
+            'नागरिक माहिती व पात्रता प्रोफाइल'
+          )}
         </h1>
         <p className="text-xs sm:text-sm text-navy/60 leading-relaxed">
-          {language === 'hi'
-            ? 'अपनी मूल जानकारी दर्ज करें। योजना साथी इसके आधार पर केंद्रीय एवं राज्य कल्याण योजनाओं की सटीक पात्रता जांचता है।'
-            : 'Fill in your baseline details. Scheme Saathi uses this data to evaluate deterministic welfare eligibility under official guidelines.'}
+          {pickLang(
+            language,
+            'Fill in your baseline details. Scheme Saathi uses this data to evaluate deterministic welfare eligibility under official guidelines.',
+            'अपनी मूल जानकारी दर्ज करें। योजना साथी इसके आधार पर केंद्रीय एवं राज्य कल्याण योजनाओं की सटीक पात्रता जांचता है।',
+            'तुमची प्राथमिक माहिती भरा. योजना साथी या माहितीच्या आधारे केंद्र व राज्य शासकीय योजनांची अचूक पात्रता तपासते.'
+          )}
         </p>
       </div>
 
@@ -166,12 +175,22 @@ export const OnboardingPage: React.FC = () => {
         <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1">
           <div className="flex items-center gap-2 font-bold">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>{language === 'hi' ? 'अधूरी जानकारी (पात्रता जांच हेतु आवश्यक)' : 'Incomplete Profile (Required for Scheme Matching)'}:</span>
+            <span>
+              {pickLang(
+                language,
+                'Incomplete Profile (Required for Scheme Matching)',
+                'अधूरी जानकारी (पात्रता जांच हेतु आवश्यक)',
+                'अपूर्ण माहिती (पात्रता तपासणीसाठी आवश्यक)'
+              )}:
+            </span>
           </div>
           <p className="opacity-80">
-            {language === 'hi'
-              ? `कृपया निम्नलिखित फ़ील्ड भरें: ${missingFields.join(', ')}`
-              : `Please provide: ${missingFields.join(', ')}`}
+            {pickLang(
+              language,
+              `Please provide: ${missingFields.join(', ')}`,
+              `कृपया निम्नलिखित फ़ील्ड भरें: ${missingFields.join(', ')}`,
+              `कृपया खालील माहिती भरा: ${missingFields.join(', ')}`
+            )}
           </p>
         </div>
       )}
@@ -188,7 +207,12 @@ export const OnboardingPage: React.FC = () => {
         <StatusBanner
           type="success"
           title="Profile Saved Successfully"
-          message={language === 'hi' ? 'आपकी प्रोफ़ाइल सहेजी गई। डैशबोर्ड पर ले जाया जा रहा है...' : 'Your profile has been saved. Redirecting to dashboard...'}
+          message={pickLang(
+            language,
+            'Your profile has been saved. Redirecting to dashboard...',
+            'आपकी प्रोफ़ाइल सहेजी गई। डैशबोर्ड पर ले जाया जा रहा है...',
+            'तुमचे प्रोफाइल जतन झाले आहे. डॅशबोर्डवर जात आहे...'
+          )}
           action={
             <Link to="/dashboard">
               <Button size="sm" variant="outline">
@@ -204,7 +228,7 @@ export const OnboardingPage: React.FC = () => {
         <form onSubmit={handleSubmit}>
           <CardHeader>
             <h3 className="font-bold font-editorial text-navy text-lg">
-              {language === 'hi' ? 'मूल नागरिक विवरण' : 'Baseline Citizen Attributes'}
+              {pickLang(language, 'Baseline Citizen Attributes', 'मूल नागरिक विवरण', 'प्राथमिक नागरिक तपशील')}
             </h3>
             <p className="text-xs text-navy/50">Used to match welfare guidelines across central & state ministries</p>
           </CardHeader>
@@ -213,7 +237,7 @@ export const OnboardingPage: React.FC = () => {
             {/* Full Name & DOB */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label={language === 'hi' ? 'पूरा नाम' : 'Full Name'}
+                label={pickLang(language, 'Full Name', 'पूरा नाम', 'संपूर्ण नाव')}
                 placeholder="e.g. Ramesh Kumar"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
@@ -221,7 +245,12 @@ export const OnboardingPage: React.FC = () => {
               />
 
               <Input
-                label={language === 'hi' ? 'जन्म तिथि (आयु हेतु)' : 'Date of Birth (for Age evaluation)'}
+                label={pickLang(
+                  language,
+                  'Date of Birth (for Age evaluation)',
+                  'जन्म तिथि (आयु हेतु)',
+                  'जन्मतारीख (वयानुसार तपासणीसाठी)'
+                )}
                 type="date"
                 value={dob}
                 onChange={(e) => setDob(e.target.value)}
@@ -232,14 +261,14 @@ export const OnboardingPage: React.FC = () => {
             {/* Gender & Social Category */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Select
-                label={language === 'hi' ? 'लिंग (Gender)' : 'Gender'}
+                label={pickLang(language, 'Gender', 'लिंग (Gender)', 'लिंग')}
                 value={gender}
                 onChange={(e) => setGender(e.target.value)}
                 options={genderOptions}
               />
 
               <Select
-                label={language === 'hi' ? 'सामाजिक श्रेणी' : 'Social Category / Caste'}
+                label={pickLang(language, 'Social Category / Caste', 'सामाजिक श्रेणी', 'सामाजिक प्रवर्ग')}
                 value={casteCategory}
                 onChange={(e) => setCasteCategory(e.target.value)}
                 options={casteCategories}
@@ -249,7 +278,7 @@ export const OnboardingPage: React.FC = () => {
             {/* State & District */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label={language === 'hi' ? 'राज्य (State)' : 'State of Residence'}
+                label={pickLang(language, 'State of Residence', 'राज्य (State)', 'राज्य')}
                 placeholder="e.g. Uttar Pradesh or Maharashtra"
                 value={stateName}
                 onChange={(e) => setStateName(e.target.value)}
@@ -257,7 +286,7 @@ export const OnboardingPage: React.FC = () => {
               />
 
               <Input
-                label={language === 'hi' ? 'जिला (District)' : 'District'}
+                label={pickLang(language, 'District', 'जिला (District)', 'जिल्हा')}
                 placeholder="e.g. Varanasi or Pune"
                 value={district}
                 onChange={(e) => setDistrict(e.target.value)}
@@ -268,7 +297,7 @@ export const OnboardingPage: React.FC = () => {
             {/* Residence Type Radio Buttons */}
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-navy/70 tracking-wide">
-                {language === 'hi' ? 'आवास क्षेत्र (Residence Type)' : 'Residence Type'}
+                {pickLang(language, 'Residence Type', 'आवास क्षेत्र (Residence Type)', 'निवास क्षेत्र')}
               </label>
               <div className="grid grid-cols-3 gap-2.5">
                 {(['rural', 'semi_urban', 'urban'] as const).map((type) => (
@@ -291,14 +320,19 @@ export const OnboardingPage: React.FC = () => {
             {/* Occupation & Annual Income */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Select
-                label={language === 'hi' ? 'व्यवसाय (Occupation)' : 'Primary Occupation'}
+                label={pickLang(language, 'Primary Occupation', 'व्यवसाय (Occupation)', 'मुख्य व्यवसाय')}
                 value={occupation}
                 onChange={(e) => setOccupation(e.target.value)}
                 options={occupations}
               />
 
               <Input
-                label={language === 'hi' ? 'वार्षिक पारिवारिक आय (₹)' : 'Annual Family Income (₹)'}
+                label={pickLang(
+                  language,
+                  'Annual Family Income (₹)',
+                  'वार्षिक पारिवारिक आय (₹)',
+                  'वार्षिक कौटुंबिक उत्पन्न (₹)'
+                )}
                 type="number"
                 placeholder="e.g. 120000"
                 value={income}
@@ -312,7 +346,12 @@ export const OnboardingPage: React.FC = () => {
             {occupation === 'farmer' && (
               <div className="p-4 rounded-2xl bg-sage-light/60 border border-sage/30 space-y-4">
                 <span className="text-xs font-bold uppercase tracking-wider text-navy/70 block">
-                  {language === 'hi' ? 'कृषि भूमि विवरण (Farmer Status & Landholding)' : 'Agricultural Landholding Details'}
+                  {pickLang(
+                    language,
+                    'Agricultural Landholding Details',
+                    'कृषि भूमि विवरण (Farmer Status & Landholding)',
+                    'शेतजमीन धारणा तपशील'
+                  )}
                 </span>
 
                 <div className="flex items-center gap-3">
@@ -324,15 +363,23 @@ export const OnboardingPage: React.FC = () => {
                     className="w-4 h-4 rounded text-saffron focus:ring-saffron"
                   />
                   <label htmlFor="is_landholder" className="text-xs font-semibold text-navy">
-                    {language === 'hi'
-                      ? 'क्या आपके या आपके परिवार के नाम पर कृषि योग्य भूमि है?'
-                      : 'Do you own cultivable agricultural land?'}
+                    {pickLang(
+                      language,
+                      'Do you own cultivable agricultural land?',
+                      'क्या आपके या आपके परिवार के नाम पर कृषि योग्य भूमि है?',
+                      'तुमच्या किंवा कुटुंबाच्या नावावर लागवडीयोग्य शेतजमीन आहे का?'
+                    )}
                   </label>
                 </div>
 
                 {isLandholdingFarmer && (
                   <Input
-                    label={language === 'hi' ? 'कृषि भूमि का आकार (एकड़)' : 'Total Cultivable Land Owned (Acres)'}
+                    label={pickLang(
+                      language,
+                      'Total Cultivable Land Owned (Acres)',
+                      'कृषि भूमि का आकार (एकड़)',
+                      'एकूण शेतजमीन (एकर)'
+                    )}
                     type="number"
                     step="0.1"
                     placeholder="e.g. 1.5"
@@ -354,9 +401,12 @@ export const OnboardingPage: React.FC = () => {
                 className="w-4 h-4 rounded text-saffron focus:ring-saffron"
               />
               <label htmlFor="is_taxpayer" className="text-xs text-navy/70">
-                {language === 'hi'
-                  ? 'क्या आपने या परिवार के किसी सदस्य ने पिछले वर्ष आयकर (Income Tax) का भुगतान किया?'
-                  : 'Did you or any member of your household pay Income Tax in the last assessment year?'}
+                {pickLang(
+                  language,
+                  'Did you or any member of your household pay Income Tax in the last assessment year?',
+                  'क्या आपने या परिवार के किसी सदस्य ने पिछले वर्ष आयकर (Income Tax) का भुगतान किया?',
+                  'मागील वर्षी तुम्ही किंवा कुटुंबातील कोणीही आयकर भरला आहे का?'
+                )}
               </label>
             </div>
           </CardContent>
@@ -374,7 +424,12 @@ export const OnboardingPage: React.FC = () => {
               leftIcon={<Check className="w-4 h-4" />}
               isLoading={saving}
             >
-              {language === 'hi' ? 'प्रोफ़ाइल सहेजें व आगे बढ़ें' : 'Save Profile & Continue'}
+              {pickLang(
+                language,
+                'Save Profile & Continue',
+                'प्रोफ़ाइल सहेजें व आगे बढ़ें',
+                'प्रोफाइल जतन करून पुढे जा'
+              )}
             </Button>
           </CardFooter>
         </form>

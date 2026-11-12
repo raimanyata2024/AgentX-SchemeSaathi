@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from '@/context/LanguageContext';
+import { pickLang } from '@/utils/i18n';
 import {
   Search,
   Check,
@@ -186,13 +187,18 @@ export const LandingPage: React.FC = () => {
             <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#FDF3E7] border border-[#F5D8B8] text-[#D99548] text-xs font-semibold shadow-2xs">
               <span className="text-[#E67E22] text-sm">✦</span>
               <span>
-                {language === 'hi' ? 'आपकी भलाई, हमारी प्राथमिकता' : 'Your Welfare, Our Priority'}
+                {pickLang(language, 'Your Welfare, Our Priority', 'आपकी भलाई, हमारी प्राथमिकता', 'तुमचे कल्याण, आमची प्राथमिकता')}
               </span>
             </div>
 
             {/* 2. Main Headline: Exact 3-line Serif Display */}
             <h1 className="font-editorial text-4xl sm:text-5xl lg:text-[3.5rem] font-bold tracking-tight text-[#172B45] leading-[1.08]">
-              {language === 'hi' ? (
+              {language === 'mr' ? (
+                <>
+                  योजना शोधापासून ते <br />
+                  <span className="text-[#E08528]">अर्ज तयारीपर्यंत.</span>
+                </>
+              ) : language === 'hi' ? (
                 <>
                   योजना खोज से लेकर <br />
                   <span className="text-[#E08528]">आवेदन की तैयारी तक.</span>
@@ -208,7 +214,13 @@ export const LandingPage: React.FC = () => {
 
             {/* 3. Supporting Text */}
             <p className="text-base sm:text-lg text-[#172B45]/80 max-w-lg leading-relaxed font-normal">
-              {language === 'hi' ? (
+              {language === 'mr' ? (
+                <>
+                  सरकारी योजना शोधा, तुमची पात्रता समजून घ्या आणि तुमचे{' '}
+                  <strong className="text-[#172B45] font-bold">अर्ज तयार करा</strong> — सर्व काही
+                  एकाच सोप्या ठिकाणी.
+                </>
+              ) : language === 'hi' ? (
                 <>
                   सरकारी योजनाओं की खोज करें, अपनी पात्रता समझें और अपने{' '}
                   <strong className="text-[#172B45] font-bold">आवेदन तैयार करें</strong> — सब कुछ एक
@@ -229,15 +241,15 @@ export const LandingPage: React.FC = () => {
               <Link to="/schemes" className="group">
                 <button className="bg-[#E67E22] hover:bg-[#D35400] text-white rounded-full px-7 py-3.5 font-bold text-sm shadow-[0_4px_16px_rgba(230,126,34,0.35)] hover:shadow-[0_6px_22px_rgba(230,126,34,0.45)] transition-all duration-200 flex items-center gap-2.5 active:scale-98 cursor-pointer">
                   <Search className="w-4 h-4 text-white" />
-                  <span>{language === 'hi' ? 'योजनाएं खोजें →' : 'Explore Schemes →'}</span>
+                  <span>{pickLang(language, 'Explore Schemes →', 'योजनाएं खोजें →', 'योजना पहा →')}</span>
                 </button>
               </Link>
 
               {/* Secondary CTA: White Pill with Navy Border */}
-              <Link to="/schemes">
+              <Link to="/eligible">
                 <button className="bg-white hover:bg-[#F8F6F0] text-[#172B45] border-2 border-[#172B45] rounded-full px-6 py-3.5 font-bold text-sm transition-all duration-200 flex items-center gap-2 active:scale-98 cursor-pointer shadow-subtle">
                   <Check className="w-4 h-4 text-[#172B45] stroke-[3]" />
-                  <span>{language === 'hi' ? 'पात्रता जांचें' : 'Check Eligibility'}</span>
+                  <span>{pickLang(language, 'Check Eligibility', 'पात्रता जांचें', 'पात्रता तपासा')}</span>
                 </button>
               </Link>
             </div>
@@ -252,7 +264,7 @@ export const LandingPage: React.FC = () => {
                 <div>
                   <div className="font-extrabold text-[#172B45] text-sm leading-none">10Cr+</div>
                   <span className="text-[#172B45]/60 text-[11px]">
-                    {language === 'hi' ? 'सहायता प्राप्त नागरिक' : 'Citizens Helped'}
+                    {pickLang(language, 'Citizens Helped', 'सहायता प्राप्त नागरिक', 'मदत मिळालेले नागरिक')}
                   </span>
                 </div>
               </div>
@@ -265,7 +277,7 @@ export const LandingPage: React.FC = () => {
                 <div>
                   <div className="font-extrabold text-[#172B45] text-sm leading-none">100+</div>
                   <span className="text-[#172B45]/60 text-[11px]">
-                    {language === 'hi' ? 'सरकारी योजनाएं' : 'Schemes'}
+                    {pickLang(language, 'Schemes', 'सरकारी योजनाएं', 'शासकीय योजना')}
                   </span>
                 </div>
               </div>
@@ -277,10 +289,10 @@ export const LandingPage: React.FC = () => {
                 </div>
                 <div>
                   <div className="font-extrabold text-[#172B45] text-sm leading-none">
-                    {language === 'hi' ? 'तेज़ व सरल' : 'Fast & Easy'}
+                    {pickLang(language, 'Fast & Easy', 'तेज़ व सरल', 'जलद व सोपे')}
                   </div>
                   <span className="text-[#172B45]/60 text-[11px]">
-                    {language === 'hi' ? 'कुछ ही मिनटों में' : 'in Just Minutes'}
+                    {pickLang(language, 'in Just Minutes', 'कुछ ही मिनटों में', 'काही मिनिटांत')}
                   </span>
                 </div>
               </div>
@@ -506,10 +518,10 @@ export const LandingPage: React.FC = () => {
           </div>
           <div>
             <h3 className="font-bold text-[#172B45] text-sm">
-              {language === 'hi' ? 'योजनाएं खोजें' : 'Search Schemes'}
+              {pickLang(language, 'Search Schemes', 'योजनाएं खोजें', 'योजना शोधा')}
             </h3>
             <p className="text-xs text-[#172B45]/60 mt-0.5">
-              {language === 'hi' ? 'अपने लिए उपयुक्त योजनाएं पाएं' : 'Find the right schemes for you'}
+              {pickLang(language, 'Find the right schemes for you', 'अपने लिए उपयुक्त योजनाएं पाएं', 'तुमच्यासाठी योग्य योजना मिळवा')}
             </p>
           </div>
         </div>
@@ -521,10 +533,10 @@ export const LandingPage: React.FC = () => {
           </div>
           <div>
             <h3 className="font-bold text-[#172B45] text-sm">
-              {language === 'hi' ? 'पात्रता जांचें' : 'Check Eligibility'}
+              {pickLang(language, 'Check Eligibility', 'पात्रता जांचें', 'पात्रता तपासा')}
             </h3>
             <p className="text-xs text-[#172B45]/60 mt-0.5">
-              {language === 'hi' ? 'पात्रता तुरंत स्पष्ट जानें' : 'Know your eligibility instantly'}
+              {pickLang(language, 'Know your eligibility instantly', 'पात्रता तुरंत स्पष्ट जानें', 'तुमची पात्रता तत्काळ जाणून घ्या')}
             </p>
           </div>
         </div>
@@ -536,10 +548,10 @@ export const LandingPage: React.FC = () => {
           </div>
           <div>
             <h3 className="font-bold text-[#172B45] text-sm">
-              {language === 'hi' ? 'दस्तावेज़ तैयार करें' : 'Prepare Documents'}
+              {pickLang(language, 'Prepare Documents', 'दस्तावेज़ तैयार करें', 'दस्तऐवज तयार करा')}
             </h3>
             <p className="text-xs text-[#172B45]/60 mt-0.5">
-              {language === 'hi' ? 'पूरी चेकलिस्ट प्राप्त करें' : 'Get a complete checklist'}
+              {pickLang(language, 'Get a complete checklist', 'पूरी चेकलिस्ट प्राप्त करें', 'संपूर्ण यादी मिळवा')}
             </p>
           </div>
         </div>
@@ -551,10 +563,10 @@ export const LandingPage: React.FC = () => {
           </div>
           <div>
             <h3 className="font-bold text-[#172B45] text-sm">
-              {language === 'hi' ? 'विश्वास के साथ आवेदन' : 'Apply with Confidence'}
+              {pickLang(language, 'Apply with Confidence', 'विश्वास के साथ आवेदन', 'आत्मविश्वासाने अर्ज करा')}
             </h3>
             <p className="text-xs text-[#172B45]/60 mt-0.5">
-              {language === 'hi' ? 'आवेदन आसानी से ट्रैक करें' : 'Track your application easily'}
+              {pickLang(language, 'Track your application easily', 'आवेदन आसानी से ट्रैक करें', 'तुमचा अर्ज सहजपणे ट्रॅक करा')}
             </p>
           </div>
         </div>
@@ -567,17 +579,17 @@ export const LandingPage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-[#D99548]">
-              {language === 'hi' ? 'सत्यापित योजनाएं' : 'Curated Welfare Catalog'}
+              {pickLang(language, 'Curated Welfare Catalog', 'सत्यापित योजनाएं', 'सत्यापित योजना संकलन')}
             </span>
             <h2 className="text-2xl sm:text-3xl font-editorial font-bold text-[#172B45] tracking-tight mt-1">
-              {language === 'hi' ? 'प्रमुख सरकारी कल्याण योजनाएं' : 'Featured Central Welfare Schemes'}
+              {pickLang(language, 'Featured Central Welfare Schemes', 'प्रमुख सरकारी कल्याण योजनाएं', 'प्रमुख शासकीय कल्याणकारी योजना')}
             </h2>
           </div>
           <Link
             to="/schemes"
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#172B45] hover:text-[#E67E22] transition-colors"
           >
-            <span>{language === 'hi' ? 'सभी योजनाएं देखें' : 'View all schemes'}</span>
+            <span>{pickLang(language, 'View all schemes', 'सभी योजनाएं देखें', 'सर्व योजना पहा')}</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
@@ -675,18 +687,21 @@ export const LandingPage: React.FC = () => {
       <section className="bg-white rounded-3xl p-8 sm:p-10 border border-[#172B45]/8 shadow-subtle flex flex-col sm:flex-row items-center justify-between gap-6">
         <div className="space-y-1 text-center sm:text-left">
           <h3 className="font-editorial text-xl sm:text-2xl font-bold text-[#172B45]">
-            {language === 'hi' ? 'क्या आप सहायता चाहते हैं?' : 'Need Guidance on Welfare Schemes?'}
+            {pickLang(language, 'Need Guidance on Welfare Schemes?', 'क्या आप सहायता चाहते हैं?', 'कल्याणकारी योजनांबाबत मार्गदर्शन हवे आहे का?')}
           </h3>
           <p className="text-xs sm:text-sm text-[#172B45]/60">
-            {language === 'hi'
-              ? 'योजना साथी से अपनी भाषा में खुलकर बात करें और अपनी पात्रता जानें।'
-              : 'Interact with Scheme Saathi in Hindi or English to evaluate deterministic eligibility.'}
+            {pickLang(
+              language,
+              'Interact with Scheme Saathi in English, Hindi, or Marathi to evaluate deterministic eligibility.',
+              'योजना साथी से अपनी भाषा में खुलकर बात करें और अपनी पात्रता जानें।',
+              'तुमच्या भाषेत योजना साथीशी संवाद साधा आणि तुमची पात्रता जाणून घ्या.'
+            )}
           </p>
         </div>
         <Link to="/chat">
           <button className="bg-[#172B45] hover:bg-[#112033] text-white rounded-full px-6 py-3 font-semibold text-sm transition-all duration-200 flex items-center gap-2 shadow-subtle hover:shadow-premium active:scale-98 cursor-pointer shrink-0">
             <Sparkles className="w-4 h-4 text-[#D99548]" />
-            <span>{language === 'hi' ? 'साथी से पूछें' : 'Ask AI Saathi'}</span>
+            <span>{pickLang(language, 'Ask AI Saathi', 'साथी से पूछें', 'AI साथीला विचारा')}</span>
           </button>
         </Link>
       </section>

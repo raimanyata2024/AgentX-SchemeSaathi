@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { Scheme, EligibilityResult } from '@/types';
 import { useLanguage } from '@/context/LanguageContext';
+import { pickLang } from '@/utils/i18n';
 import { Modal } from '@/components/common/Modal';
 import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
@@ -46,28 +47,38 @@ export const EligibilityResultModal: React.FC<EligibilityResultModalProps> = ({
         <div className="flex items-center gap-2">
           <Sparkles className="w-5 h-5 text-saffron" />
           <span className="font-editorial text-base sm:text-lg font-bold text-navy">
-            {language === 'hi' ? 'पात्रता मूल्यांकन परिणाम' : 'Deterministic Eligibility Evaluation'}
+            {pickLang(
+              language,
+              'Deterministic Eligibility Evaluation',
+              'पात्रता मूल्यांकन परिणाम',
+              'पात्रता तपासणी निकाल'
+            )}
           </span>
         </div>
       }
       footer={
         <div className="w-full flex items-center justify-between gap-3">
           <Button variant="outline" size="sm" onClick={onClose}>
-            {language === 'hi' ? 'बंद करें' : 'Close'}
+            {pickLang(language, 'Close', 'बंद करें', 'बंद करा')}
           </Button>
 
           {scheme && (
             <div className="flex items-center gap-2">
               <Link to={`/schemes/${scheme.id}`} onClick={onClose}>
                 <Button variant="outline" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                  {language === 'hi' ? 'संपूर्ण विवरण व दस्तावेज़' : 'Full Scheme Details'}
+                  {pickLang(
+                    language,
+                    'Full Scheme Details',
+                    'संपूर्ण विवरण व दस्तावेज़',
+                    'संपूर्ण माहिती व कागदपत्रे'
+                  )}
                 </Button>
               </Link>
 
               {eligibility?.result === 'eligible' && (
                 <Link to="/applications" onClick={onClose}>
                   <Button variant="saffron" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
-                    {language === 'hi' ? 'आवेदन तैयारी' : 'Start Application'}
+                    {pickLang(language, 'Start Application', 'आवेदन तैयारी', 'अर्ज तयारी सुरू करा')}
                   </Button>
                 </Link>
               )}
@@ -81,11 +92,12 @@ export const EligibilityResultModal: React.FC<EligibilityResultModalProps> = ({
           <div className="py-12">
             <Spinner
               size="lg"
-              label={
-                language === 'hi'
-                  ? 'आपकी प्रोफ़ाइल के विरुद्ध नियमों का मूल्यांकन किया जा रहा है...'
-                  : 'Evaluating criteria AST against your verified PostgreSQL profile...'
-              }
+              label={pickLang(
+                language,
+                'Evaluating criteria AST against your verified PostgreSQL profile...',
+                'आपकी प्रोफ़ाइल के विरुद्ध नियमों का मूल्यांकन किया जा रहा है...',
+                'तुमच्या नागरिक प्रोफाइलवर आधारित पात्रता नियमांची तपासणी सुरू आहे...'
+              )}
             />
           </div>
         ) : error ? (
@@ -95,7 +107,12 @@ export const EligibilityResultModal: React.FC<EligibilityResultModalProps> = ({
           </div>
         ) : !eligibility || !scheme ? (
           <div className="text-center py-8 text-xs text-navy/60">
-            {language === 'hi' ? 'कोई मूल्यांकन डेटा उपलब्ध नहीं है।' : 'No evaluation data available.'}
+            {pickLang(
+              language,
+              'No evaluation data available.',
+              'कोई मूल्यांकन डेटा उपलब्ध नहीं है।',
+              'पात्रता तपासणीची माहिती उपलब्ध नाही.'
+            )}
           </div>
         ) : (
           <div className="space-y-5">
@@ -140,7 +157,12 @@ export const EligibilityResultModal: React.FC<EligibilityResultModalProps> = ({
                 </div>
                 <div>
                   <h4 className="font-bold text-navy text-sm">
-                    {language === 'hi' ? 'पात्रता स्थिति' : 'Deterministic Determination'}
+                    {pickLang(
+                      language,
+                      'Deterministic Determination',
+                      'पात्रता स्थिति',
+                      'पात्रता स्थिती'
+                    )}
                   </h4>
                   <p className="text-[11px] text-navy/50">
                     Rule Version: {eligibility.rule_version_id || 'v1-authoritative'}
@@ -169,9 +191,12 @@ export const EligibilityResultModal: React.FC<EligibilityResultModalProps> = ({
                 <div className="flex items-center gap-2 text-amber-900 font-bold">
                   <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                   <span>
-                    {language === 'hi'
-                      ? 'पूर्ण मूल्यांकन हेतु आवश्यक प्रोफ़ाइल फ़ील्ड:'
-                      : 'Missing Profile Attributes for Definitive Evaluation:'}
+                    {pickLang(
+                      language,
+                      'Missing Profile Attributes for Definitive Evaluation:',
+                      'पूर्ण मूल्यांकन हेतु आवश्यक प्रोफ़ाइल फ़ील्ड:',
+                      'पूर्ण पात्रता तपासणीसाठी आवश्यक प्रोफाइल तपशील:'
+                    )}
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -187,7 +212,7 @@ export const EligibilityResultModal: React.FC<EligibilityResultModalProps> = ({
                 <div className="pt-1">
                   <Link to="/onboarding" onClick={onClose}>
                     <Button variant="outline" size="sm" className="bg-white text-amber-900 border-amber-300 hover:bg-amber-100">
-                      {language === 'hi' ? 'प्रोफ़ाइल अपडेट करें' : 'Update Profile'}
+                      {pickLang(language, 'Update Profile', 'प्रोफ़ाइल अपडेट करें', 'प्रोफाइल अद्यतनित करा')}
                     </Button>
                   </Link>
                 </div>
@@ -198,7 +223,12 @@ export const EligibilityResultModal: React.FC<EligibilityResultModalProps> = ({
             {eligibility.condition_results && eligibility.condition_results.length > 0 && (
               <div className="space-y-2">
                 <h4 className="text-[11px] font-bold uppercase tracking-wider text-navy/50">
-                  {language === 'hi' ? 'जांची गई वैधानिक शर्तें' : 'Statutory Criteria Evaluation Checklist'}
+                  {pickLang(
+                    language,
+                    'Statutory Criteria Evaluation Checklist',
+                    'जांची गई वैधानिक शर्तें',
+                    'तपासलेले वैधानिक पात्रता निकष'
+                  )}
                 </h4>
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                   {eligibility.condition_results.map((cond, idx) => (

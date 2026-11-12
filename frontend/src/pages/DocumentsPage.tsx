@@ -3,6 +3,10 @@ import { documentService } from '@/services/api/documentService';
 import { UserDocument } from '@/types';
 import { useLanguage } from '@/context/LanguageContext';
 import { useAuth } from '@/context/AuthContext';
+import { useApiMode } from '@/context/ApiModeContext';
+import { isAuthenticationError } from '@/utils/errors';
+import { AuthPromptCard } from '@/components/common/AuthPromptCard';
+import { LoginModal } from '@/components/common/LoginModal';
 import { Card, CardHeader, CardContent } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Spinner } from '@/components/common/Spinner';
@@ -51,9 +55,12 @@ export const DocumentsPage: React.FC<{ initialDocuments?: UserDocument[] }> = ({
   initialDocuments,
 }) => {
   const { t, language } = useLanguage();
-  const { profile } = useAuth();
+  const { profile, isAuthenticated, token, isLoading: authLoading } = useAuth();
+  const { isMockMode } = useApiMode();
   const [documents, setDocuments] = useState<UserDocument[]>(initialDocuments ?? []);
   const [loading, setLoading] = useState<boolean>(initialDocuments === undefined);
+  const [fetchError, setFetchError] = useState<{ kind: 'auth' | 'network'; message: string } | null>(null);
+  const [isLoginOpen, setIsLoginOpen] = useState<boolean>(false);
   const [uploading, setUploading] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedType, setSelectedType] = useState<string>('aadhaar_card');
@@ -87,22 +94,47 @@ export const DocumentsPage: React.FC<{ initialDocuments?: UserDocument[] }> = ({
   };
 
   const fetchDocs = async () => {
+    if (authLoading) return;
+    if (!isAuthenticated && !isMockMode) {
+      setDocuments([]);
+      setFetchError({
+        kind: 'auth',
+        message: pickText(
+          'Please sign in to upload, inspect, and verify documents in your personal Vault.',
+          'अपने निजी वॉल्ट में दस्तावेज़ अपलोड और सत्यापित करने के लिए कृपया लॉग इन करें।',
+          'तुमच्या वैयक्तिक व्हॉल्टमध्ये दस्तऐवज अपलोड व पडताळण्यासाठी कृपया लॉग इन करा.'
+        ),
+      });
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
+    setFetchError(null);
     try {
       const data = await documentService.getUserDocuments();
       setDocuments(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load user documents:', err);
+      if (isAuthenticationError(err)) {
+        setDocuments([]);
+        setFetchError({ kind: 'auth', message: err?.message || '' });
+      } else {
+        setFetchError({
+          kind: 'network',
+          message: err?.message || pickText('Failed to load documents.', 'दस्तावेज़ लोड करने में समस्या हुई।', 'दस्तऐवज लोड करताना अडचण आली.'),
+        });
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (initialDocuments === undefined) {
+    if (initialDocuments === undefined && !authLoading) {
       fetchDocs();
     }
-  }, []);
+  }, [authLoading, isAuthenticated, token, isMockMode]);
 
   useEffect(() => {
     return () => {
@@ -430,6 +462,13 @@ export const DocumentsPage: React.FC<{ initialDocuments?: UserDocument[] }> = ({
               size="md"
               label={pickText('Loading vault documents...', 'दस्तावेज़ सूची लोड हो रही है...', 'दस्तऐवज यादी लोड होत आहे...')}
             />
+          ) : fetchError ? (
+            <AuthPromptCard
+              kind={fetchError.kind}
+              errorDetail={fetchError.message}
+              onSignIn={() => setIsLoginOpen(true)}
+              onRetry={fetchDocs}
+            />
           ) : documents.length === 0 ? (
             <div className="text-center py-8 text-navy/60 text-sm">
               {pickText(
@@ -718,6 +757,11 @@ export const DocumentsPage: React.FC<{ initialDocuments?: UserDocument[] }> = ({
           </div>
         </Modal>
       )}
+
+      <LoginModal
+        isOpen={isLoginOpen}
+        onClose={() => setIsLoginOpen(false)}
+      />
     </div>
   );
 };

@@ -22,10 +22,12 @@ from app.schemas.agent import (
     SchemeCardSummary,
 )
 from app.agents.tools import (
-    extract_citizen_entities,
+    _find_active_application_draft,
     apply_extracted_entities_to_profile,
-    tool_check_eligibility,
+    build_readonly_form_preview,
+    extract_citizen_entities,
     tool_build_checklist,
+    tool_check_eligibility,
     tool_fill_form,
     tool_submit_form,
 )
@@ -304,8 +306,14 @@ def plan_and_execute_agentic_flow(
 
     # Step 2: Handle explicit UI form actions
     if request.form_action == "confirm_submit" and active_scheme_code:
-        if request.form_data is not None:
-            fill_check = tool_fill_form(
+        target_app, _, _ = _find_active_application_draft(profile, active_scheme_code)
+        has_non_empty_form_data = bool(request.form_data)
+        eff_resolved_conflicts = target_app.get("resolved_conflicts") if target_app else None
+
+        if has_non_empty_form_data:
+            # Validate incoming non-None form_data read-only; never overwrite the persisted draft
+            # prior to snapshot-hash / stale-review verification inside tool_submit_form.
+            fill_check = build_readonly_form_preview(
                 db=db,
                 user=current_user,
                 profile=profile,
@@ -333,26 +341,61 @@ def plan_and_execute_agentic_flow(
                     form_draft_data=fill_check,
                     engine_mode="deterministic",
                 )
-        if db is not None and profile is not None:
-            from app.services.readiness_service import evaluate_application_readiness
-            eff_form_data = request.form_data
-            if eff_form_data is None:
-                eff_fill = tool_fill_form(
+            if db is not None and profile is not None and target_app is None:
+                # Persist newly supplied data as an unconfirmed draft and require explicit review first.
+                saved_draft = tool_fill_form(
                     db=db,
                     user=current_user,
                     profile=profile,
                     scheme_code_or_name=active_scheme_code,
+                    form_overrides=request.form_data or {},
                     conversation_entities=conv_entities_ctx,
                     lang=lang,
                 )
-                eff_form_data = eff_fill.get("form_data") or {}
+                review_msg = (
+                    f"⚠️ **पुष्टीपूर्वी अर्जाचा मसुदा तपासा:** नव्याने भरलेली माहिती स्वतःहून नक्की करता येत नाही."
+                    if lang == "mr"
+                    else f"⚠️ **पुष्टि से पहले आवेदन की समीक्षा करें:** नए या बदले गए डेटा की स्वतः पुष्टि नहीं की जा सकती।"
+                    if lang == "hi"
+                    else "⚠️ **Review required before confirmation:** Newly submitted application data cannot be silently confirmed without review."
+                )
+                session["workflow_step"] = "PRE-FILL"
+                return AgentChatResponse(
+                    conversation_id=conv_id,
+                    message=review_msg,
+                    spoken_text=review_msg,
+                    detected_language=lang,
+                    response_type=ChatResponseType.FORM_DRAFT,
+                    workflow_step="PRE-FILL",
+                    active_scheme={"scheme_code": active_scheme_code},
+                    form_draft_data=saved_draft,
+                    engine_mode="deterministic",
+                )
+            eff_form_data = fill_check.get("form_data") or request.form_data or {}
+        elif target_app is not None:
+            # Handle None or empty {} form_data read-only from the exact reviewed snapshot.
+            eff_form_data = dict(target_app.get("form_data") or {})
+        else:
+            eff_fill = build_readonly_form_preview(
+                db=db,
+                user=current_user,
+                profile=profile,
+                scheme_code_or_name=active_scheme_code,
+                conversation_entities=conv_entities_ctx,
+                lang=lang,
+            )
+            eff_form_data = eff_fill.get("form_data") or {}
+
+        if db is not None and profile is not None:
+            from app.services.readiness_service import evaluate_application_readiness
             readiness_gate = evaluate_application_readiness(
                 scheme_code=active_scheme_code,
-                scheme_id=active_scheme_code,
+                scheme_id=(target_app.get("scheme_id") if target_app else None) or active_scheme_code,
                 form_data=eff_form_data,
                 profile=profile,
                 db=db,
                 lang=lang,
+                resolved_conflicts=eff_resolved_conflicts,
             )
             if not readiness_gate.get("passed"):
                 reasons = "; ".join(e["message"] for e in (readiness_gate.get("errors") or [])[:3])
@@ -363,12 +406,12 @@ def plan_and_execute_agentic_flow(
                     if lang == "hi"
                     else f"⚠️ **Readiness gate blocked confirmation:** {reasons}"
                 )
-                fill_check = tool_fill_form(
+                preview_data = build_readonly_form_preview(
                     db=db,
                     user=current_user,
                     profile=profile,
                     scheme_code_or_name=active_scheme_code,
-                    form_overrides=request.form_data or {},
+                    form_overrides=request.form_data if has_non_empty_form_data else None,
                     conversation_entities=conv_entities_ctx,
                     lang=lang,
                 )
@@ -380,7 +423,7 @@ def plan_and_execute_agentic_flow(
                     response_type=ChatResponseType.FORM_DRAFT,
                     workflow_step="PRE-FILL",
                     active_scheme={"scheme_code": active_scheme_code},
-                    form_draft_data=fill_check,
+                    form_draft_data=preview_data,
                     engine_mode="deterministic",
                 )
 
@@ -391,7 +434,7 @@ def plan_and_execute_agentic_flow(
                 profile=profile,
                 scheme_code_or_name=active_scheme_code,
                 confirmed=True,
-                form_data=request.form_data,
+                form_data=request.form_data if has_non_empty_form_data else None,
                 lang=lang,
                 consent_acknowledged=True,
                 expected_version=request.expected_version,
@@ -409,12 +452,11 @@ def plan_and_execute_agentic_flow(
                 response_type=ChatResponseType.FORM_DRAFT,
                 workflow_step="PRE-FILL",
                 active_scheme={"scheme_code": active_scheme_code},
-                form_draft_data=tool_fill_form(
+                form_draft_data=build_readonly_form_preview(
                     db=db,
                     user=current_user,
                     profile=profile,
                     scheme_code_or_name=active_scheme_code,
-                    form_overrides=request.form_data or {},
                     conversation_entities=conv_entities_ctx,
                     lang=lang,
                 ),
@@ -659,6 +701,7 @@ def plan_and_execute_agentic_flow(
                 profile=profile,
                 db=db,
                 lang=lang,
+                resolved_conflicts=fill_check.get("resolved_conflicts"),
             )
             if not readiness_gate.get("passed"):
                 reasons = "; ".join(e["message"] for e in (readiness_gate.get("errors") or [])[:3])
@@ -688,7 +731,7 @@ def plan_and_execute_agentic_flow(
             profile,
             active_scheme_code,
             confirmed=False,
-            form_data=request.form_data,
+            form_data=None if (db is not None and profile is not None) else request.form_data,
             lang=lang,
         )
         session["workflow_step"] = "CONFIRM"
@@ -1466,6 +1509,7 @@ def plan_and_execute_agentic_flow(
                 profile=profile,
                 db=db,
                 lang=lang,
+                resolved_conflicts=fill_check.get("resolved_conflicts"),
             )
             if not readiness_gate.get("passed"):
                 reasons = "; ".join(e["message"] for e in (readiness_gate.get("errors") or [])[:3])
@@ -1495,7 +1539,7 @@ def plan_and_execute_agentic_flow(
             profile,
             active_scheme_code,
             confirmed=False,
-            form_data=request.form_data,
+            form_data=None if (db is not None and profile is not None) else request.form_data,
             lang=lang,
         )
         session["workflow_step"] = "CONFIRM"

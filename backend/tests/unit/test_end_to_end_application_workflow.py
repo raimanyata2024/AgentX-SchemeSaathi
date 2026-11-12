@@ -669,3 +669,435 @@ def test_mode_a_direct_api_adapter_updates_registry_and_application_record(file_
         app.dependency_overrides.clear()
         clear_registered_portal_adapters()
         db.close()
+
+
+def _create_kcc_ready_farmer(db: Session, *, email: str):
+    """Ensure KCC scheme is seeded and return a farmer profile with all verified KCC documents."""
+    if not db.execute(select(Scheme).where(Scheme.scheme_code == "KCC")).scalar_one_or_none():
+        _seed_schemes(db, ["kcc.json"])
+    user, profile = _create_farmer_with_partial_vault(db, email=email)
+    pdata = dict(profile.profile_data or {})
+    docs = list(pdata.get("documents", []))
+    docs.extend(
+        [
+            {
+                "id": f"doc-land-{user.id}",
+                "user_id": str(user.id),
+                "document_type": "land_records",
+                "lifecycle_status": "verified",
+                "verification_status": "verified",
+                "sha256": "ccc333kcc",
+                "verified_at": "2026-11-11T10:15:00Z",
+                "reviewed_fields": {"khasra_number": "45/2"},
+            },
+            {
+                "id": f"doc-photo-{user.id}",
+                "user_id": str(user.id),
+                "document_type": "passport_photo",
+                "lifecycle_status": "verified",
+                "verification_status": "verified",
+                "sha256": "ddd444kcc",
+                "verified_at": "2026-11-11T10:20:00Z",
+                "reviewed_fields": {},
+            },
+        ]
+    )
+    pdata["documents"] = docs
+    profile.profile_data = pdata
+    db.commit()
+    db.refresh(profile)
+    return user, profile
+
+
+_KCC_BROWSER_FORM_DATA = {
+    "applicant_name": "Suresh Patil",
+    "age": "44",
+    "gender": "MALE",
+    "aadhaar_number": "345678901234",
+    "mobile_number": "9822011223",
+    "state": "Maharashtra",
+    "district": "Nashik",
+    "village": "Musalgaon",
+    "farming_type": "Owner Cultivator",
+    "cultivable_land_acres": "2",
+    "crops_grown": "Soybean, Onion",
+    "requested_credit_limit": "120000",
+    "preferred_bank": "State Bank of India",
+    "branch_name": "Sinnar Branch",
+    "existing_outstanding_debt": "0",
+}
+
+
+def test_kcc_confirm_submit_with_none_and_unchanged_form_data(file_sqlite_env):
+    """
+    Regression test for KCC confirmation snapshot hash consistency across chat review -> confirm:
+    1) request_confirmation with browser string numeric values ('2', '120000', '0', '44') persists
+       normalized draft + stamped version/data_hash;
+    2) confirm_submit with form_data=None succeeds against the reviewed snapshot;
+    3) confirm_submit with unchanged non-None form_data (including numeric strings) also succeeds
+       without a spurious version bump.
+    """
+    SessionFactory = file_sqlite_env
+    db = SessionFactory()
+    try:
+        # Scenario A: confirm_submit with form_data=None
+        user_a, _ = _create_kcc_ready_farmer(db, email="kcc.none@example.gov.in")
+        conv_a = "conv-kcc-confirm-none"
+
+        r_prep = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_a,
+                message="Apply for KCC",
+                language="en",
+                scheme_id="KCC",
+            ),
+            current_user=user_a,
+        )
+        assert r_prep.response_type == ChatResponseType.FORM_DRAFT
+
+        r_review = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_a,
+                message="Proceed to confirmation",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="PRE-FILL",
+                form_action="request_confirmation",
+                form_data=dict(_KCC_BROWSER_FORM_DATA),
+            ),
+            current_user=user_a,
+        )
+        assert r_review.response_type == ChatResponseType.CONFIRMATION_REQUEST, r_review.message
+        reviewed = r_review.confirmation_data
+        assert reviewed is not None
+        reviewed_version = reviewed["version"]
+        reviewed_hash = reviewed["data_hash"]
+        app_id_a = reviewed["application_id"]
+        # Initial "Apply for KCC" created v1 (partial); filling mandatory KCC fields bumped snapshot to v2
+        assert reviewed_version == 2
+        assert isinstance(reviewed_hash, str) and len(reviewed_hash) == 64
+
+        r_confirm_none = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_a,
+                message="Confirm submission",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="CONFIRM",
+                form_action="confirm_submit",
+                form_data=None,
+                expected_version=reviewed_version,
+                expected_hash=reviewed_hash,
+            ),
+            current_user=user_a,
+        )
+        assert r_confirm_none.response_type == ChatResponseType.CONFIRMATION_RESULT, r_confirm_none.message
+        cdata_a = r_confirm_none.confirmation_data
+        assert cdata_a["confirmed"] is True
+        assert cdata_a["lifecycle_state"] in ("confirmed", "awaiting_manual_portal")
+        assert cdata_a["confirmed_version"] == reviewed_version
+        assert cdata_a["confirmed_hash"] == reviewed_hash
+
+        # Verify persisted DB state across fresh session
+        fresh_a = SessionFactory()
+        try:
+            prof_a = fresh_a.execute(select(UserProfile).where(UserProfile.user_id == user_a.id)).scalar_one()
+            stored_a = next(a for a in prof_a.profile_data["applications"] if a["id"] == app_id_a)
+            assert stored_a["version"] == reviewed_version
+            assert stored_a["data_hash"] == reviewed_hash
+            assert stored_a["confirmed_at"] is not None
+            assert stored_a["confirmed_version"] == reviewed_version
+            assert stored_a["confirmed_hash"] == reviewed_hash
+            assert stored_a["form_data"]["requested_credit_limit"] == 120000
+            assert stored_a["form_data"]["cultivable_land_acres"] == 2.0
+            rec_a = fresh_a.execute(
+                select(ApplicationRecord).where(ApplicationRecord.application_id == app_id_a)
+            ).scalar_one()
+            assert rec_a.application_status in ("confirmed", "awaiting_manual_portal")
+        finally:
+            fresh_a.close()
+
+        # Scenario B: confirm_submit with non-None unchanged form_data (browser string numbers)
+        user_b, _ = _create_kcc_ready_farmer(db, email="kcc.unchanged@example.gov.in")
+        conv_b = "conv-kcc-confirm-unchanged"
+
+        agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_b,
+                message="Apply for KCC",
+                language="en",
+                scheme_id="KCC",
+            ),
+            current_user=user_b,
+        )
+        r_review_b = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_b,
+                message="Proceed to confirmation",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="PRE-FILL",
+                form_action="request_confirmation",
+                form_data=dict(_KCC_BROWSER_FORM_DATA),
+            ),
+            current_user=user_b,
+        )
+        assert r_review_b.response_type == ChatResponseType.CONFIRMATION_REQUEST, r_review_b.message
+        rev_b = r_review_b.confirmation_data
+
+        r_confirm_unchanged = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_b,
+                message="Confirm submission",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="CONFIRM",
+                form_action="confirm_submit",
+                form_data=dict(_KCC_BROWSER_FORM_DATA),
+                expected_version=rev_b["version"],
+                expected_hash=rev_b["data_hash"],
+            ),
+            current_user=user_b,
+        )
+        assert r_confirm_unchanged.response_type == ChatResponseType.CONFIRMATION_RESULT, r_confirm_unchanged.message
+        assert r_confirm_unchanged.confirmation_data["confirmed"] is True
+        assert r_confirm_unchanged.confirmation_data["confirmed_version"] == rev_b["version"]
+        assert r_confirm_unchanged.confirmation_data["confirmed_hash"] == rev_b["data_hash"]
+    finally:
+        db.close()
+
+
+def test_kcc_confirm_submit_blocks_modified_form_data_and_stale_hash_without_wiping_snapshot(file_sqlite_env):
+    """
+    Verify integrity guarantees are never weakened for KCC:
+    1) Modified non-None form_data during confirm_submit is strictly rejected (both with AND without
+       expected_version/expected_hash), increments version, and requires fresh review;
+    2) Out-of-band edit followed by confirm_submit(form_data=None) with stale expected_hash rejects
+       cleanly without wiping persisted version/data_hash, then succeeds after re-review.
+    """
+    SessionFactory = file_sqlite_env
+    db = SessionFactory()
+    try:
+        # Case 1: Modified form_data with and without expected_version/expected_hash
+        user_mod, _ = _create_kcc_ready_farmer(db, email="kcc.modified@example.gov.in")
+        conv_mod = "conv-kcc-modified"
+
+        agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(conversation_id=conv_mod, message="Apply for KCC", language="en", scheme_id="KCC"),
+            current_user=user_mod,
+        )
+        r_rev1 = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_mod,
+                message="Proceed to confirmation",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="PRE-FILL",
+                form_action="request_confirmation",
+                form_data=dict(_KCC_BROWSER_FORM_DATA),
+            ),
+            current_user=user_mod,
+        )
+        assert r_rev1.response_type == ChatResponseType.CONFIRMATION_REQUEST
+        v1 = r_rev1.confirmation_data["version"]
+        h1 = r_rev1.confirmation_data["data_hash"]
+        app_id_mod = r_rev1.confirmation_data["application_id"]
+
+        # 1a) Modified credit limit WITH expected_version/expected_hash -> blocked, bumped to v2
+        modified_payload_1 = {**_KCC_BROWSER_FORM_DATA, "requested_credit_limit": "250000"}
+        r_block_with_expected = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_mod,
+                message="Confirm submission",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="CONFIRM",
+                form_action="confirm_submit",
+                form_data=modified_payload_1,
+                expected_version=v1,
+                expected_hash=h1,
+            ),
+            current_user=user_mod,
+        )
+        assert r_block_with_expected.response_type == ChatResponseType.FORM_DRAFT
+        assert r_block_with_expected.workflow_step == "PRE-FILL"
+
+        prof_mod = db.execute(select(UserProfile).where(UserProfile.user_id == user_mod.id)).scalar_one()
+        app_after_1a = next(a for a in prof_mod.profile_data["applications"] if a["id"] == app_id_mod)
+        assert app_after_1a["version"] == v1 + 1
+        assert app_after_1a["data_hash"] and app_after_1a["data_hash"] != h1
+        assert app_after_1a.get("lifecycle_state") != "confirmed"
+        assert app_after_1a.get("confirmed_hash") is None
+
+        # Re-review updated v2 draft before testing missing expected_version/expected_hash
+        r_rev2 = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_mod,
+                message="Proceed to confirmation",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="PRE-FILL",
+                form_action="request_confirmation",
+                form_data=None,
+            ),
+            current_user=user_mod,
+        )
+        assert r_rev2.response_type == ChatResponseType.CONFIRMATION_REQUEST
+        v2 = r_rev2.confirmation_data["version"]
+        h2 = r_rev2.confirmation_data["data_hash"]
+        assert v2 == v1 + 1
+
+        # 1b) Modified credit limit WITHOUT expected_version/expected_hash -> STILL blocked, bumped to v3
+        modified_payload_2 = {**modified_payload_1, "requested_credit_limit": "180000"}
+        r_block_no_expected = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_mod,
+                message="Confirm submission",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="CONFIRM",
+                form_action="confirm_submit",
+                form_data=modified_payload_2,
+                expected_version=None,
+                expected_hash=None,
+            ),
+            current_user=user_mod,
+        )
+        assert r_block_no_expected.response_type == ChatResponseType.FORM_DRAFT
+        assert r_block_no_expected.workflow_step == "PRE-FILL"
+
+        db.expire_all()
+        prof_mod = db.execute(select(UserProfile).where(UserProfile.user_id == user_mod.id)).scalar_one()
+        app_after_1b = next(a for a in prof_mod.profile_data["applications"] if a["id"] == app_id_mod)
+        assert app_after_1b["version"] == v2 + 1
+        assert app_after_1b["data_hash"] and app_after_1b["data_hash"] != h2
+        assert app_after_1b.get("lifecycle_state") != "confirmed"
+        assert app_after_1b["form_data"]["requested_credit_limit"] == 180000
+
+        # Case 2: Out-of-band edit + confirm_submit(form_data=None) with stale expected_hash
+        user_stale, _ = _create_kcc_ready_farmer(db, email="kcc.stale@example.gov.in")
+        conv_stale = "conv-kcc-stale"
+
+        agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(conversation_id=conv_stale, message="Apply for KCC", language="en", scheme_id="KCC"),
+            current_user=user_stale,
+        )
+        r_stale_rev = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_stale,
+                message="Proceed to confirmation",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="PRE-FILL",
+                form_action="request_confirmation",
+                form_data=dict(_KCC_BROWSER_FORM_DATA),
+            ),
+            current_user=user_stale,
+        )
+        assert r_stale_rev.response_type == ChatResponseType.CONFIRMATION_REQUEST
+        stale_v1 = r_stale_rev.confirmation_data["version"]
+        stale_h1 = r_stale_rev.confirmation_data["data_hash"]
+        app_id_stale = r_stale_rev.confirmation_data["application_id"]
+
+        # Mutate the draft via save_draft (out-of-band edit after citizen opened review widget)
+        r_edit = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_stale,
+                message="Save draft edits",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="PRE-FILL",
+                form_action="save_draft",
+                form_data={**_KCC_BROWSER_FORM_DATA, "branch_name": "Nashik Main Branch"},
+            ),
+            current_user=user_stale,
+        )
+        assert r_edit.response_type == ChatResponseType.FORM_DRAFT
+
+        db.expire_all()
+        prof_stale = db.execute(select(UserProfile).where(UserProfile.user_id == user_stale.id)).scalar_one()
+        edited_app = next(a for a in prof_stale.profile_data["applications"] if a["id"] == app_id_stale)
+        edited_v = edited_app["version"]
+        edited_h = edited_app["data_hash"]
+        assert edited_v == stale_v1 + 1
+        assert edited_h and edited_h != stale_h1
+
+        # Confirm with form_data=None and stale (v1, h1) -> rejected, snapshot version/hash NOT wiped
+        r_stale_reject = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_stale,
+                message="Confirm submission",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="CONFIRM",
+                form_action="confirm_submit",
+                form_data=None,
+                expected_version=stale_v1,
+                expected_hash=stale_h1,
+            ),
+            current_user=user_stale,
+        )
+        assert r_stale_reject.response_type == ChatResponseType.FORM_DRAFT
+        assert r_stale_reject.workflow_step == "PRE-FILL"
+
+        db.expire_all()
+        prof_stale = db.execute(select(UserProfile).where(UserProfile.user_id == user_stale.id)).scalar_one()
+        app_after_reject = next(a for a in prof_stale.profile_data["applications"] if a["id"] == app_id_stale)
+        assert app_after_reject["version"] == edited_v
+        assert app_after_reject["data_hash"] == edited_h
+        assert app_after_reject.get("lifecycle_state") != "confirmed"
+
+        # Now re-review and confirm with latest version/hash + form_data=None -> succeeds
+        r_rereview = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_stale,
+                message="Proceed to confirmation",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="PRE-FILL",
+                form_action="request_confirmation",
+                form_data=None,
+            ),
+            current_user=user_stale,
+        )
+        assert r_rereview.response_type == ChatResponseType.CONFIRMATION_REQUEST
+        assert r_rereview.confirmation_data["version"] == edited_v
+        assert r_rereview.confirmation_data["data_hash"] == edited_h
+
+        r_final_confirm = agent_service.process_chat_message(
+            db=db,
+            request=AgentChatRequest(
+                conversation_id=conv_stale,
+                message="Confirm submission",
+                language="en",
+                scheme_id="KCC",
+                workflow_step="CONFIRM",
+                form_action="confirm_submit",
+                form_data=None,
+                expected_version=edited_v,
+                expected_hash=edited_h,
+            ),
+            current_user=user_stale,
+        )
+        assert r_final_confirm.response_type == ChatResponseType.CONFIRMATION_RESULT
+        assert r_final_confirm.confirmation_data["confirmed"] is True
+        assert r_final_confirm.confirmation_data["confirmed_version"] == edited_v
+        assert r_final_confirm.confirmation_data["confirmed_hash"] == edited_h
+    finally:
+        db.close()

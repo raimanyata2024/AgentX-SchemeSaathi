@@ -721,6 +721,164 @@ def tool_build_checklist(
 
 # ── Tool 3: fill_form ────────────────────────────────────────────────────────
 
+def _find_active_application_draft(
+    profile: Optional[UserProfile],
+    scheme_code_or_name: str,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Read-only lookup of a citizen's active editable/unsubmitted draft for a scheme."""
+    from app.api.v1.applications import canonical_scheme_key
+
+    if not profile or not profile.profile_data:
+        return None, None, []
+
+    current_profile_data = dict(profile.profile_data or {})
+    apps = list(current_profile_data.get("applications", []))
+    target_canon = canonical_scheme_key(scheme_code_or_name)
+    match = next(
+        (
+            a
+            for a in apps
+            if a.get("lifecycle_state") not in ("submitted", "portal_submitted", "submitting", "submission_unknown")
+            and not a.get("legacy_synthetic_submission")
+            and not str(a.get("reference_number") or "").upper().startswith("SAATHI/")
+            and canonical_scheme_key(a.get("scheme_code") or a.get("scheme_id") or "", a.get("scheme_name") or "") == target_canon
+        ),
+        None,
+    )
+    return match, current_profile_data, apps
+
+
+def _normalize_form_overrides_for_scheme(
+    resolved_code: str,
+    overrides: Optional[Dict[str, Any]],
+    existing_form_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Normalize incoming form_data values via the scheme's field types so snapshot hashing
+    stays consistent regardless of string vs numeric serialization in API requests.
+    """
+    from app.services.prefill_service import clean_scalar, is_empty_value, normalize_field_value
+
+    if not overrides:
+        return {}
+
+    schema = get_form_schema_for_scheme(resolved_code)
+    field_map: Dict[str, Dict[str, Any]] = {}
+    if schema:
+        for sec in schema.get("sections", []):
+            for f in sec.get("fields", []):
+                fname = f.get("name")
+                if fname:
+                    field_map[fname] = f
+
+    existing = existing_form_data or {}
+    normalized: Dict[str, Any] = {}
+    for k, raw_v in overrides.items():
+        if raw_v is None:
+            normalized[k] = ""
+            continue
+        cleaned = clean_scalar(raw_v)
+        if is_empty_value(cleaned):
+            normalized[k] = ""
+            continue
+        field = field_map.get(k)
+        norm_val = normalize_field_value(cleaned, field) if field else cleaned
+        prev_val = existing.get(k)
+        # Preserve exact stored numeric representation (e.g., 2.0 vs 2) when numeric values match
+        if (
+            field
+            and (field.get("type") or "").lower() == "number"
+            and isinstance(norm_val, (int, float))
+            and not isinstance(norm_val, bool)
+            and isinstance(prev_val, (int, float))
+            and not isinstance(prev_val, bool)
+            and float(norm_val) == float(prev_val)
+        ):
+            norm_val = prev_val
+        normalized[k] = norm_val
+    return normalized
+
+
+def build_readonly_form_preview(
+    db: Optional[Session],
+    user: Optional[User],
+    profile: Optional[UserProfile],
+    scheme_code_or_name: str,
+    form_overrides: Optional[Dict[str, Any]] = None,
+    conversation_entities: Optional[Dict[str, Any]] = None,
+    lang: str = "en",
+) -> Dict[str, Any]:
+    """Compute a complete pre-fill preview without mutating profile drafts or DB state."""
+    from app.services.prefill_service import is_empty_value, run_universal_prefill
+    from app.agents.form_schemas import get_unavailable_schema_payload
+    from app.api.v1.applications import canonical_scheme_key, resolve_scheme_info
+    from app.services.portal_registry_service import get_portal_integration_entry
+
+    target_canon = canonical_scheme_key(scheme_code_or_name)
+    existing_match, _, _ = _find_active_application_draft(profile, scheme_code_or_name)
+
+    prefill_res = run_universal_prefill(
+        scheme_code_or_name=scheme_code_or_name,
+        profile=profile,
+        user=user,
+        db=db,
+        existing_draft=existing_match,
+        form_overrides=form_overrides or {},
+        conversation_entities=conversation_entities or {},
+        lang=lang,
+    )
+    if not prefill_res.get("form_supported"):
+        portal_url = prefill_res.get("official_portal") or "https://india.gov.in"
+        scheme_name = scheme_code_or_name
+        canon_code = target_canon or scheme_code_or_name
+        if db is not None:
+            try:
+                _, db_code, db_name, db_portal = resolve_scheme_info(scheme_code_or_name, db)
+                canon_code = db_code
+                scheme_name = db_name
+                portal_url = db_portal
+            except Exception:
+                pass
+        unavail = get_unavailable_schema_payload(canon_code, scheme_name, portal_url, lang=lang)
+        portal_entry = get_portal_integration_entry(canon_code, db=db, lang=lang)
+        unavail["portal_integration"] = portal_entry
+        unavail["official_portal"] = portal_entry.get("official_application_url") or portal_url
+        return unavail
+
+    target_code = prefill_res["scheme_code"]
+    portal_entry = get_portal_integration_entry(target_code, db=db, lang=lang)
+    eff_portal_url = portal_entry.get("official_application_url") or prefill_res.get("official_portal") or "https://india.gov.in"
+    form_values = dict(prefill_res["values"])
+    persisted_form_data = {k: ("" if is_empty_value(v) else v) for k, v in form_values.items()}
+    return {
+        "form_supported": True,
+        "schema_available": True,
+        "schema_status": prefill_res["schema_status"],
+        "application_id": existing_match.get("id") if existing_match else None,
+        "draft_id": existing_match.get("id") if existing_match else None,
+        "scheme_code": target_code,
+        "scheme_title": prefill_res["scheme_title"],
+        "official_portal": eff_portal_url,
+        "portal_integration": portal_entry,
+        "total_fields": prefill_res["total_fields"],
+        "total_mandatory_fields": prefill_res["total_mandatory_fields"],
+        "filled_mandatory_fields": prefill_res["filled_mandatory_fields"],
+        "auto_populated_fields": prefill_res["auto_populated_fields"],
+        "requires_input_count": prefill_res["requires_input_count"],
+        "requires_input_fields": prefill_res["requires_input_fields"],
+        "conditional_fields": prefill_res["conditional_fields"],
+        "conflicting_fields": prefill_res["conflicting_fields"],
+        "invalid_fields": prefill_res["invalid_fields"],
+        "readiness_percentage": prefill_res["readiness_percentage"],
+        "prefill_percentage": prefill_res["readiness_percentage"],
+        "sections": prefill_res["sections"],
+        "values": form_values,
+        "form_data": persisted_form_data,
+        "resolved_conflicts": prefill_res.get("resolved_conflicts") or (existing_match.get("resolved_conflicts") if existing_match else None) or {},
+        "can_confirm": prefill_res["can_confirm"],
+    }
+
+
 def tool_fill_form(
     db: Session,
     user: Optional[User],
@@ -744,28 +902,19 @@ def tool_fill_form(
 
     from app.services.portal_registry_service import get_portal_integration_entry
     from app.services.submission_service import (
+        STATE_AWAITING_CONFIRMATION,
+        STATE_CONFIRMED,
+        STATE_DRAFT,
         build_normalized_application_record,
+        stamp_application_version_and_check_invalidation,
         sync_application_record_to_db,
     )
 
     form_overrides = form_overrides or {}
     conversation_entities = conversation_entities or {}
 
-    existing_match: Optional[Dict[str, Any]] = None
     target_canon = canonical_scheme_key(scheme_code_or_name)
-    if profile and profile.profile_data:
-        apps = list(profile.profile_data.get("applications", []))
-        existing_match = next(
-            (
-                a
-                for a in apps
-                if a.get("lifecycle_state") not in ("submitted", "portal_submitted", "submitting", "submission_unknown")
-                and not a.get("legacy_synthetic_submission")
-                and not str(a.get("reference_number") or "").upper().startswith("SAATHI/")
-                and canonical_scheme_key(a.get("scheme_code") or a.get("scheme_id") or "", a.get("scheme_name") or "") == target_canon
-            ),
-            None,
-        )
+    existing_match, _, _ = _find_active_application_draft(profile, scheme_code_or_name)
 
     prefill_res = run_universal_prefill(
         scheme_code_or_name=scheme_code_or_name,
@@ -838,9 +987,9 @@ def tool_fill_form(
         "submission_method": portal_entry.get("submission_method"),
         "portal_integration": portal_entry,
         "schema_available": True,
-        "lifecycle_state": "draft",
+        "lifecycle_state": (existing_match.get("lifecycle_state") if existing_match else None) or STATE_DRAFT,
         "form_data": persisted_form_data,
-        "resolved_conflicts": prefill_res.get("resolved_conflicts") or {},
+        "resolved_conflicts": prefill_res.get("resolved_conflicts") or (existing_match.get("resolved_conflicts") if existing_match else None) or {},
         "prefill_summary": prefill_res,
         "readiness_percentage": readiness,
         "total_mandatory_fields": total_mandatory_fields,
@@ -870,6 +1019,23 @@ def tool_fill_form(
         ],
     }
 
+    if existing_match:
+        for meta_key in (
+            "version",
+            "data_hash",
+            "confirmed_at",
+            "confirmed_hash",
+            "confirmed_version",
+            "confirmation",
+            "confirmation_invalidated_at",
+            "submission_attempts",
+            "portal_notes",
+            "submission_date",
+            "official_reference_number",
+        ):
+            if meta_key in existing_match:
+                draft_record[meta_key] = existing_match[meta_key]
+
     citizen_uid = user.id if user and hasattr(user, "id") and user.id else (profile.user_id if profile and hasattr(profile, "user_id") else None)
     if profile and db is not None:
         from sqlalchemy.orm.attributes import flag_modified
@@ -877,6 +1043,10 @@ def tool_fill_form(
 
         current_profile_data = dict(profile.profile_data or {})
         apps = [a for a in current_profile_data.get("applications", []) if a.get("id") != app_id]
+
+        stamp_application_version_and_check_invalidation(
+            draft_record, profile, increment_on_change=bool(existing_match)
+        )
 
         draft_record["validation_result"] = evaluate_application_readiness(
             scheme_code=target_code,
@@ -888,7 +1058,10 @@ def tool_fill_form(
             resolved_conflicts=draft_record["resolved_conflicts"],
         )
         if draft_record["validation_result"]["passed"]:
-            draft_record["lifecycle_state"] = "awaiting_confirmation"
+            if not (draft_record.get("lifecycle_state") == STATE_CONFIRMED and draft_record.get("confirmed_at")):
+                draft_record["lifecycle_state"] = STATE_AWAITING_CONFIRMATION
+        else:
+            draft_record["lifecycle_state"] = STATE_DRAFT
         draft_record["application_record"] = build_normalized_application_record(
             draft_record, citizen_uid, portal_entry
         )
@@ -929,6 +1102,7 @@ def tool_fill_form(
         "sections": prefill_res["sections"],
         "values": form_values,
         "form_data": persisted_form_data,
+        "resolved_conflicts": prefill_res.get("resolved_conflicts") or (existing_match.get("resolved_conflicts") if existing_match else None) or {},
         "can_confirm": prefill_res["can_confirm"],
     }
 
@@ -992,31 +1166,19 @@ def tool_submit_form(
         effective_user = User(id=profile.user_id, email="citizen@local")
 
     # Locate active matching application packet inside citizen profile if present
-    target_app: Optional[Dict[str, Any]] = None
-    current_profile_data: Optional[Dict[str, Any]] = None
-    apps: List[Dict[str, Any]] = []
-    if profile and profile.profile_data:
-        current_profile_data = dict(profile.profile_data or {})
-        apps = list(current_profile_data.get("applications", []))
-        target_app = next(
-            (
-                a for a in apps
-                if (a.get("scheme_code") or "").upper() == resolved_code.upper()
-                and not a.get("legacy_synthetic_submission")
-                and not str(a.get("reference_number") or "").upper().startswith("SAATHI/")
-                and not is_verified_government_submission(a)
-                and a.get("lifecycle_state") not in (STATE_SUBMITTED, STATE_PORTAL_SUBMITTED, STATE_SUBMITTING)
-            ),
-            None,
-        )
+    target_app, current_profile_data, apps = _find_active_application_draft(profile, resolved_code)
+    if target_app is not None and is_verified_government_submission(target_app):
+        target_app = None
 
     if not confirmed:
         review_summary = None
         if target_app is not None and profile is not None:
             if form_data:
-                target_app.setdefault("form_data", {}).update(
-                    {k: ("" if v is None else v) for k, v in form_data.items()}
+                existing_fd = dict(target_app.get("form_data") or {})
+                normalized_updates = _normalize_form_overrides_for_scheme(
+                    resolved_code, form_data, existing_fd
                 )
+                target_app.setdefault("form_data", {}).update(normalized_updates)
                 stamp_application_version_and_check_invalidation(target_app, profile, increment_on_change=True)
             review_summary = build_application_review_summary(
                 target_app=target_app,
@@ -1025,7 +1187,7 @@ def tool_submit_form(
                 db=db,
                 lang=lang,
             )
-            if db is not None:
+            if db is not None and current_profile_data is not None:
                 current_profile_data["applications"] = apps
                 profile.profile_data = current_profile_data
                 flag_modified(profile, "profile_data")
@@ -1096,21 +1258,76 @@ def tool_submit_form(
     # Explicit citizen confirmation received
     if target_app is not None and profile is not None and effective_user is not None:
         if form_data:
-            target_app.setdefault("form_data", {}).update(
-                {k: ("" if v is None else v) for k, v in form_data.items()}
+            from fastapi import HTTPException, status as http_status
+            from app.services.submission_service import (
+                compute_application_snapshot_hash,
+                sync_application_record_to_db,
             )
-            stamp_application_version_and_check_invalidation(target_app, profile, increment_on_change=True)
 
-        conf_res = record_explicit_confirmation(
-            target_app=target_app,
-            profile=profile,
-            current_user=effective_user,
-            db=db,
-            lang=lang,
-            consent_acknowledged=consent_acknowledged,
-            expected_version=expected_version,
-            expected_hash=expected_hash,
-        )
+            stamp_application_version_and_check_invalidation(target_app, profile, increment_on_change=False)
+            before_version = int(target_app.get("version") or 1)
+            before_hash = target_app.get("data_hash") or ""
+
+            existing_fd = dict(target_app.get("form_data") or {})
+            normalized_updates = _normalize_form_overrides_for_scheme(
+                resolved_code, form_data, existing_fd
+            )
+            candidate_fd = {**existing_fd, **normalized_updates}
+            candidate_hash = compute_application_snapshot_hash(
+                scheme_code=resolved_code,
+                form_data=candidate_fd,
+                resolved_conflicts=target_app.get("resolved_conflicts"),
+                profile=profile,
+            )
+            if candidate_hash != before_hash:
+                target_app["form_data"] = candidate_fd
+                stamp_application_version_and_check_invalidation(target_app, profile, increment_on_change=True)
+                new_version = int(target_app.get("version") or (before_version + 1))
+                if db is not None and current_profile_data is not None:
+                    current_profile_data["applications"] = apps
+                    profile.profile_data = current_profile_data
+                    flag_modified(profile, "profile_data")
+                    citizen_uid = getattr(effective_user, "id", None)
+                    if citizen_uid:
+                        sync_application_record_to_db(db, target_app, citizen_uid, portal_entry)
+                    db.commit()
+                    db.refresh(profile)
+                if expected_version is not None or expected_hash:
+                    record_explicit_confirmation(
+                        target_app=target_app,
+                        profile=profile,
+                        current_user=effective_user,
+                        db=db,
+                        lang=lang,
+                        consent_acknowledged=consent_acknowledged,
+                        expected_version=expected_version,
+                        expected_hash=expected_hash,
+                    )
+                detail_msg = {
+                    "en": f"Application data modified before confirmation (reviewed v{before_version}, current v{new_version}). Modified data cannot be silently confirmed; please review the updated application first.",
+                    "hi": f"पुष्टि से पहले आवेदन डेटा बदला गया है (समीक्षित v{before_version}, वर्तमान v{new_version})। परिवर्तित डेटा की स्वतः पुष्टि नहीं की जा सकती; कृपया पहले अद्यतन विवरण की समीक्षा करें।",
+                    "mr": f"पुष्टीपूर्वी अर्जाची माहिती बदलली आहे (तपासलेले v{before_version}, सध्याचे v{new_version}). बदललेल्या माहितीची आपोआप पुष्टी करता येत नाही; कृपया आधी अद्ययावत तपशील तपासा.",
+                }[lang]
+                raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=detail_msg)
+
+        try:
+            conf_res = record_explicit_confirmation(
+                target_app=target_app,
+                profile=profile,
+                current_user=effective_user,
+                db=db,
+                lang=lang,
+                consent_acknowledged=consent_acknowledged,
+                expected_version=expected_version,
+                expected_hash=expected_hash,
+            )
+        except Exception:
+            if db is not None and current_profile_data is not None:
+                current_profile_data["applications"] = apps
+                profile.profile_data = current_profile_data
+                flag_modified(profile, "profile_data")
+                db.commit()
+            raise
         sub_res = orchestrate_application_submission(
             target_app=target_app,
             profile=profile,
